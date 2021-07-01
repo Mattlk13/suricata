@@ -1,4 +1,4 @@
-/* Copyright (C) 2007-2018 Open Information Security Foundation
+/* Copyright (C) 2007-2020 Open Information Security Foundation
  *
  * You can copy, redistribute or modify this Program under the terms of
  * the GNU General Public License version 2 as published by the Free
@@ -33,12 +33,13 @@
 
 #include "util-unittest.h"
 #include "util-print.h"
+#include "rust.h"
 
 static int DetectTransformToMd5Setup (DetectEngineCtx *, Signature *, const char *);
-#ifdef HAVE_NSS
+#ifdef UNITTESTS
 static void DetectTransformToMd5RegisterTests(void);
-static void TransformToMd5(InspectionBuffer *buffer);
 #endif
+static void TransformToMd5(InspectionBuffer *buffer, void *options);
 
 void DetectTransformMd5Register(void)
 {
@@ -46,26 +47,18 @@ void DetectTransformMd5Register(void)
     sigmatch_table[DETECT_TRANSFORM_MD5].desc =
         "convert to md5 hash of the buffer";
     sigmatch_table[DETECT_TRANSFORM_MD5].url =
-        DOC_URL DOC_VERSION "/rules/transforms.html#to_sha256";
+        "/rules/transforms.html#to-md5";
     sigmatch_table[DETECT_TRANSFORM_MD5].Setup =
         DetectTransformToMd5Setup;
-#ifdef HAVE_NSS
     sigmatch_table[DETECT_TRANSFORM_MD5].Transform =
         TransformToMd5;
+#ifdef UNITTESTS
     sigmatch_table[DETECT_TRANSFORM_MD5].RegisterTests =
         DetectTransformToMd5RegisterTests;
 #endif
     sigmatch_table[DETECT_TRANSFORM_MD5].flags |= SIGMATCH_NOOPT;
 }
 
-#ifndef HAVE_NSS
-static int DetectTransformToMd5Setup (DetectEngineCtx *de_ctx, Signature *s, const char *nullstr)
-{
-    SCLogError(SC_ERR_NO_MD5_SUPPORT, "no MD5 calculation support built in, "
-            "needed for to_md5 keyword");
-    return -1;
-}
-#else
 /**
  *  \internal
  *  \brief Apply the nocase keyword to the last pattern match, either content or uricontent
@@ -78,28 +71,24 @@ static int DetectTransformToMd5Setup (DetectEngineCtx *de_ctx, Signature *s, con
 static int DetectTransformToMd5Setup (DetectEngineCtx *de_ctx, Signature *s, const char *nullstr)
 {
     SCEnter();
-    int r = DetectSignatureAddTransform(s, DETECT_TRANSFORM_MD5);
+    if (g_disable_hashing) {
+        SCLogError(SC_ERR_HASHING_DISABLED, "MD5 hashing has been disabled, "
+                                            "needed for to_md5 keyword");
+        SCReturnInt(-1);
+    }
+    int r = DetectSignatureAddTransform(s, DETECT_TRANSFORM_MD5, NULL);
     SCReturnInt(r);
 }
 
-static void TransformToMd5(InspectionBuffer *buffer)
+static void TransformToMd5(InspectionBuffer *buffer, void *options)
 {
     const uint8_t *input = buffer->inspect;
     const uint32_t input_len = buffer->inspect_len;
-    uint8_t output[MD5_LENGTH];
+    uint8_t output[SC_MD5_LEN];
 
     //PrintRawDataFp(stdout, input, input_len);
-
-    HASHContext *ctx = HASH_Create(HASH_AlgMD5);
-    if (ctx) {
-        HASH_Begin(ctx);
-        HASH_Update(ctx, input, input_len);
-        unsigned int len = 0;
-        HASH_End(ctx, output, &len, sizeof(output));
-        HASH_Destroy(ctx);
-
-        InspectionBufferCopy(buffer, output, sizeof(output));
-    }
+    SCMd5HashBuffer(input, input_len, output, sizeof(output));
+    InspectionBufferCopy(buffer, output, sizeof(output));
 }
 
 #ifdef UNITTESTS
@@ -110,21 +99,17 @@ static int DetectTransformToMd5Test01(void)
 
     InspectionBuffer buffer;
     InspectionBufferInit(&buffer, 8);
-    InspectionBufferSetup(&buffer, input, input_len);
+    InspectionBufferSetup(NULL, -1, &buffer, input, input_len);
     PrintRawDataFp(stdout, buffer.inspect, buffer.inspect_len);
-    TransformToMd5(&buffer);
+    TransformToMd5(&buffer, NULL);
     PrintRawDataFp(stdout, buffer.inspect, buffer.inspect_len);
     InspectionBufferFree(&buffer);
     PASS;
 }
 
-#endif
-
 static void DetectTransformToMd5RegisterTests(void)
 {
-#ifdef UNITTESTS
     UtRegisterTest("DetectTransformToMd5Test01",
             DetectTransformToMd5Test01);
-#endif
 }
 #endif

@@ -55,9 +55,10 @@ static int DetectGeoipSetupNoSupport (DetectEngineCtx *a, Signature *b, const ch
 void DetectGeoipRegister(void)
 {
     sigmatch_table[DETECT_GEOIP].name = "geoip";
+    sigmatch_table[DETECT_GEOIP].desc = "match on the source, destination or source and destination IP addresses of network traffic, and to see to which country it belongs";
+    sigmatch_table[DETECT_GEOIP].url = "/rules/header-keywords.html#geoip";
     sigmatch_table[DETECT_GEOIP].Setup = DetectGeoipSetupNoSupport;
     sigmatch_table[DETECT_GEOIP].Free = NULL;
-    sigmatch_table[DETECT_GEOIP].RegisterTests = NULL;
 }
 
 #else /* HAVE_GEOIP */
@@ -67,8 +68,10 @@ void DetectGeoipRegister(void)
 static int DetectGeoipMatch(DetectEngineThreadCtx *, Packet *,
                             const Signature *, const SigMatchCtx *);
 static int DetectGeoipSetup(DetectEngineCtx *, Signature *, const char *);
+#ifdef UNITTESTS
 static void DetectGeoipRegisterTests(void);
-static void DetectGeoipDataFree(void *);
+#endif
+static void DetectGeoipDataFree(DetectEngineCtx *, void *);
 
 /**
  * \brief Registration function for geoip keyword
@@ -77,12 +80,14 @@ static void DetectGeoipDataFree(void *);
 void DetectGeoipRegister(void)
 {
     sigmatch_table[DETECT_GEOIP].name = "geoip";
-    sigmatch_table[DETECT_GEOIP].url = DOC_URL DOC_VERSION "/rules/header-keywords.html#geoip";
+    sigmatch_table[DETECT_GEOIP].url = "/rules/header-keywords.html#geoip";
     sigmatch_table[DETECT_GEOIP].desc = "keyword to match on country of src and or dst IP";
     sigmatch_table[DETECT_GEOIP].Match = DetectGeoipMatch;
     sigmatch_table[DETECT_GEOIP].Setup = DetectGeoipSetup;
     sigmatch_table[DETECT_GEOIP].Free = DetectGeoipDataFree;
+#ifdef UNITTESTS
     sigmatch_table[DETECT_GEOIP].RegisterTests = DetectGeoipRegisterTests;
+#endif
 }
 
 /**
@@ -282,12 +287,13 @@ static int DetectGeoipMatch(DetectEngineThreadCtx *det_ctx,
 /**
  * \brief This function is used to parse geoipdata
  *
+ * \param de_ctx Pointer to the detection engine context
  * \param str Pointer to the geoipdata value string
  *
  * \retval pointer to DetectGeoipData on success
  * \retval NULL on failure
  */
-static DetectGeoipData *DetectGeoipDataParse (const char *str)
+static DetectGeoipData *DetectGeoipDataParse (DetectEngineCtx *de_ctx, const char *str)
 {
     DetectGeoipData *geoipdata = NULL;
     uint16_t pos = 0;
@@ -386,7 +392,7 @@ static DetectGeoipData *DetectGeoipDataParse (const char *str)
 
 error:
     if (geoipdata != NULL)
-        DetectGeoipDataFree(geoipdata);
+        DetectGeoipDataFree(de_ctx, geoipdata);
     return NULL;
 }
 
@@ -406,7 +412,7 @@ static int DetectGeoipSetup(DetectEngineCtx *de_ctx, Signature *s, const char *o
     DetectGeoipData *geoipdata = NULL;
     SigMatch *sm = NULL;
 
-    geoipdata = DetectGeoipDataParse(optstr);
+    geoipdata = DetectGeoipDataParse(de_ctx, optstr);
     if (geoipdata == NULL)
         goto error;
 
@@ -425,7 +431,7 @@ static int DetectGeoipSetup(DetectEngineCtx *de_ctx, Signature *s, const char *o
 
 error:
     if (geoipdata != NULL)
-        DetectGeoipDataFree(geoipdata);
+        DetectGeoipDataFree(de_ctx, geoipdata);
     if (sm != NULL)
         SCFree(sm);
     return -1;
@@ -437,7 +443,7 @@ error:
  *
  * \param geoipdata pointer to DetectGeoipData
  */
-static void DetectGeoipDataFree(void *ptr)
+static void DetectGeoipDataFree(DetectEngineCtx *de_ctx, void *ptr)
 {
     if (ptr != NULL) {
         DetectGeoipData *geoipdata = (DetectGeoipData *)ptr;
@@ -530,17 +536,12 @@ static int GeoipParseTest07(void)
                                 GEOIP_MATCH_BOTH_FLAG | GEOIP_MATCH_NEGATED);
 }
 
-
-
-#endif /* UNITTESTS */
-
 /**
  * \internal
  * \brief This function registers unit tests for DetectGeoip
  */
 static void DetectGeoipRegisterTests(void)
 {
-#ifdef UNITTESTS
     UtRegisterTest("GeoipParseTest01", GeoipParseTest01);
     UtRegisterTest("GeoipParseTest02", GeoipParseTest02);
     UtRegisterTest("GeoipParseTest03", GeoipParseTest03);
@@ -548,8 +549,6 @@ static void DetectGeoipRegisterTests(void)
     UtRegisterTest("GeoipParseTest05", GeoipParseTest05);
     UtRegisterTest("GeoipParseTest06", GeoipParseTest06);
     UtRegisterTest("GeoipParseTest07", GeoipParseTest07);
-
-#endif /* UNITTESTS */
 }
-
+#endif /* UNITTESTS */
 #endif /* HAVE_GEOIP */

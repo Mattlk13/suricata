@@ -68,7 +68,7 @@ static InspectionBuffer *GetData(DetectEngineThreadCtx *det_ctx,
        void *txv, const int list_id);
 static void DetectTlsJa3SHashSetupCallback(const DetectEngineCtx *de_ctx,
        Signature *s);
-static _Bool DetectTlsJa3SHashValidateCallback(const Signature *s,
+static bool DetectTlsJa3SHashValidateCallback(const Signature *s,
        const char **sigerror);
 static int g_tls_ja3s_hash_buffer_id = 0;
 
@@ -79,7 +79,7 @@ void DetectTlsJa3SHashRegister(void)
 {
     sigmatch_table[DETECT_AL_TLS_JA3S_HASH].name = "ja3s.hash";
     sigmatch_table[DETECT_AL_TLS_JA3S_HASH].desc = "content modifier to match the JA3S hash sticky buffer";
-    sigmatch_table[DETECT_AL_TLS_JA3S_HASH].url = DOC_URL DOC_VERSION "/rules/ja3-keywords.html#ja3s-hash";
+    sigmatch_table[DETECT_AL_TLS_JA3S_HASH].url = "/rules/ja3-keywords.html#ja3s-hash";
     sigmatch_table[DETECT_AL_TLS_JA3S_HASH].Setup = DetectTlsJa3SHashSetup;
 #ifdef UNITTESTS
     sigmatch_table[DETECT_AL_TLS_JA3S_HASH].RegisterTests = DetectTlsJa3SHashRegisterTests;
@@ -122,9 +122,16 @@ static int DetectTlsJa3SHashSetup(DetectEngineCtx *de_ctx, Signature *s, const c
     if (DetectSignatureSetAppProto(s, ALPROTO_TLS) < 0)
         return -1;
 
+    /* try to enable JA3 */
+    SSLEnableJA3();
+
     /* Check if JA3 is disabled */
-    if (!RunmodeIsUnittests() && Ja3IsDisabled("rule"))
-        return -1;
+    if (!RunmodeIsUnittests() && Ja3IsDisabled("rule")) {
+        if (!SigMatchSilentErrorEnabled(de_ctx, DETECT_AL_TLS_JA3S_HASH)) {
+            SCLogError(SC_WARN_JA3_DISABLED, "ja3(s) support is not enabled");
+        }
+        return -2;
+    }
 
     return 0;
 }
@@ -144,14 +151,14 @@ static InspectionBuffer *GetData(DetectEngineThreadCtx *det_ctx,
         const uint32_t data_len = strlen(ssl_state->server_connp.ja3_hash);
         const uint8_t *data = (uint8_t *)ssl_state->server_connp.ja3_hash;
 
-        InspectionBufferSetup(buffer, data, data_len);
+        InspectionBufferSetup(det_ctx, list_id, buffer, data, data_len);
         InspectionBufferApplyTransforms(buffer, transforms);
     }
 
     return buffer;
 }
 
-static _Bool DetectTlsJa3SHashValidateCallback(const Signature *s,
+static bool DetectTlsJa3SHashValidateCallback(const Signature *s,
                                                const char **sigerror)
 {
     const SigMatch *sm = s->init_data->smlists[g_tls_ja3s_hash_buffer_id];
@@ -170,16 +177,16 @@ static _Bool DetectTlsJa3SHashValidateCallback(const Signature *s,
         }
 
         if (cd->content_len == 32)
-            return TRUE;
+            return true;
 
         *sigerror = "Invalid length of the specified JA3S hash (should "
                     "be 32 characters long). This rule will therefore "
                     "never match.";
         SCLogError(SC_ERR_INVALID_RULE_ARGUMENT,  "rule %u: %s", s->id, *sigerror);
-        return FALSE;
+        return false;
     }
 
-    return TRUE;
+    return true;
 }
 
 static void DetectTlsJa3SHashSetupCallback(const DetectEngineCtx *de_ctx,
@@ -193,13 +200,13 @@ static void DetectTlsJa3SHashSetupCallback(const DetectEngineCtx *de_ctx,
 
         DetectContentData *cd = (DetectContentData *)sm->ctx;
 
-        _Bool changed = FALSE;
+        bool changed = false;
         uint32_t u;
         for (u = 0; u < cd->content_len; u++)
         {
             if (isupper(cd->content[u])) {
                 cd->content[u] = tolower(cd->content[u]);
-                changed = TRUE;
+                changed = true;
             }
         }
 

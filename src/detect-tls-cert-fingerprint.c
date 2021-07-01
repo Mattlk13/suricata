@@ -64,7 +64,7 @@ static InspectionBuffer *GetData(DetectEngineThreadCtx *det_ctx,
         void *txv, const int list_id);
 static void DetectTlsFingerprintSetupCallback(const DetectEngineCtx *de_ctx,
         Signature *s);
-static _Bool DetectTlsFingerprintValidateCallback(const Signature *s,
+static bool DetectTlsFingerprintValidateCallback(const Signature *s,
         const char **sigerror);
 static int g_tls_cert_fingerprint_buffer_id = 0;
 
@@ -75,8 +75,8 @@ void DetectTlsFingerprintRegister(void)
 {
     sigmatch_table[DETECT_AL_TLS_CERT_FINGERPRINT].name = "tls.cert_fingerprint";
     sigmatch_table[DETECT_AL_TLS_CERT_FINGERPRINT].alias = "tls_cert_fingerprint";
-    sigmatch_table[DETECT_AL_TLS_CERT_FINGERPRINT].desc = "content modifier to match the TLS cert fingerprint buffer";
-    sigmatch_table[DETECT_AL_TLS_CERT_FINGERPRINT].url = DOC_URL DOC_VERSION "/rules/tls-keywords.html#tls-cert-fingerprint";
+    sigmatch_table[DETECT_AL_TLS_CERT_FINGERPRINT].desc = "match on the TLS cert fingerprint buffer";
+    sigmatch_table[DETECT_AL_TLS_CERT_FINGERPRINT].url = "/rules/tls-keywords.html#tls-cert-fingerprint";
     sigmatch_table[DETECT_AL_TLS_CERT_FINGERPRINT].Setup = DetectTlsFingerprintSetup;
 #ifdef UNITTESTS
     sigmatch_table[DETECT_AL_TLS_CERT_FINGERPRINT].RegisterTests = DetectTlsFingerprintRegisterTests;
@@ -141,14 +141,14 @@ static InspectionBuffer *GetData(DetectEngineThreadCtx *det_ctx,
         const uint32_t data_len = strlen(ssl_state->server_connp.cert0_fingerprint);
         const uint8_t *data = (uint8_t *)ssl_state->server_connp.cert0_fingerprint;
 
-        InspectionBufferSetup(buffer, data, data_len);
+        InspectionBufferSetup(det_ctx, list_id, buffer, data, data_len);
         InspectionBufferApplyTransforms(buffer, transforms);
     }
 
     return buffer;
 }
 
-static _Bool DetectTlsFingerprintValidateCallback(const Signature *s,
+static bool DetectTlsFingerprintValidateCallback(const Signature *s,
                                                   const char **sigerror)
 {
     const SigMatch *sm = s->init_data->smlists[g_tls_cert_fingerprint_buffer_id];
@@ -163,25 +163,25 @@ static _Bool DetectTlsFingerprintValidateCallback(const Signature *s,
             *sigerror = "Invalid length of the specified fingerprint. "
                         "This rule will therefore never match.";
             SCLogWarning(SC_WARN_POOR_RULE, "rule %u: %s", s->id, *sigerror);
-            return FALSE;
+            return false;
         }
 
-        _Bool have_delimiters = FALSE;
+        bool have_delimiters = false;
         uint32_t u;
         for (u = 0; u < cd->content_len; u++)
         {
             if (cd->content[u] == ':') {
-                have_delimiters = TRUE;
+                have_delimiters = true;
                 break;
             }
         }
 
-        if (have_delimiters == FALSE) {
+        if (!have_delimiters) {
             *sigerror = "No colon delimiters ':' detected in content after "
                         "tls.cert_fingerprint. This rule will therefore "
                         "never match.";
             SCLogWarning(SC_WARN_POOR_RULE, "rule %u: %s", s->id, *sigerror);
-            return FALSE;
+            return false;
         }
 
         if (cd->flags & DETECT_CONTENT_NOCASE) {
@@ -192,7 +192,7 @@ static _Bool DetectTlsFingerprintValidateCallback(const Signature *s,
         }
     }
 
-    return TRUE;
+    return true;
 }
 
 static void DetectTlsFingerprintSetupCallback(const DetectEngineCtx *de_ctx,
@@ -206,13 +206,13 @@ static void DetectTlsFingerprintSetupCallback(const DetectEngineCtx *de_ctx,
 
         DetectContentData *cd = (DetectContentData *)sm->ctx;
 
-        _Bool changed = FALSE;
+        bool changed = false;
         uint32_t u;
         for (u = 0; u < cd->content_len; u++)
         {
             if (isupper(cd->content[u])) {
                 cd->content[u] = tolower(cd->content[u]);
-                changed = TRUE;
+                changed = true;
             }
         }
 

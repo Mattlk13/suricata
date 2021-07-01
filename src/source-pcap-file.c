@@ -58,8 +58,7 @@ static TmEcode ReceivePcapFileThreadInit(ThreadVars *, const void *, void **);
 static void ReceivePcapFileThreadExitStats(ThreadVars *, void *);
 static TmEcode ReceivePcapFileThreadDeinit(ThreadVars *, void *);
 
-static TmEcode DecodePcapFile(ThreadVars *, Packet *, void *, PacketQueue *,
-                              PacketQueue *);
+static TmEcode DecodePcapFile(ThreadVars *, Packet *, void *);
 static TmEcode DecodePcapFileThreadInit(ThreadVars *, const void *, void **);
 static TmEcode DecodePcapFileThreadDeinit(ThreadVars *tv, void *data);
 
@@ -119,7 +118,6 @@ void TmModuleReceivePcapFileRegister (void)
     tmm_modules[TMM_RECEIVEPCAPFILE].PktAcqBreakLoop = NULL;
     tmm_modules[TMM_RECEIVEPCAPFILE].ThreadExitPrintStats = ReceivePcapFileThreadExitStats;
     tmm_modules[TMM_RECEIVEPCAPFILE].ThreadDeinit = ReceivePcapFileThreadDeinit;
-    tmm_modules[TMM_RECEIVEPCAPFILE].RegisterTests = NULL;
     tmm_modules[TMM_RECEIVEPCAPFILE].cap_flags = 0;
     tmm_modules[TMM_RECEIVEPCAPFILE].flags = TM_FLAG_RECEIVE_TM;
 }
@@ -131,7 +129,6 @@ void TmModuleDecodePcapFileRegister (void)
     tmm_modules[TMM_DECODEPCAPFILE].Func = DecodePcapFile;
     tmm_modules[TMM_DECODEPCAPFILE].ThreadExitPrintStats = NULL;
     tmm_modules[TMM_DECODEPCAPFILE].ThreadDeinit = DecodePcapFileThreadDeinit;
-    tmm_modules[TMM_DECODEPCAPFILE].RegisterTests = NULL;
     tmm_modules[TMM_DECODEPCAPFILE].cap_flags = 0;
     tmm_modules[TMM_DECODEPCAPFILE].flags = TM_FLAG_DECODE_TM;
 }
@@ -263,10 +260,9 @@ TmEcode ReceivePcapFileThreadInit(ThreadVars *tv, const void *initdata, void **d
             SCReturnInt(TM_ECODE_OK);
         }
 
+        pv->shared = &ptv->shared;
         status = InitPcapFile(pv);
         if(status == TM_ECODE_OK) {
-            pv->shared = &ptv->shared;
-
             ptv->is_directory = 0;
             ptv->behavior.file = pv;
         } else {
@@ -294,11 +290,26 @@ TmEcode ReceivePcapFileThreadInit(ThreadVars *tv, const void *initdata, void **d
             CleanupPcapFileThreadVars(ptv);
             SCReturnInt(TM_ECODE_OK);
         }
+        pv->cur_dir_depth = 0;
+
+        int should_recurse;
+        pv->should_recurse = false;
+        if (ConfGetBool("pcap-file.recursive", &should_recurse) == 1) {
+            pv->should_recurse = (should_recurse == 1);
+        }
 
         int should_loop = 0;
         pv->should_loop = false;
         if (ConfGetBool("pcap-file.continuous", &should_loop) == 1) {
-            pv->should_loop = should_loop == 1;
+            pv->should_loop = (should_loop == 1);
+        }
+
+        if (pv->should_recurse == true && pv->should_loop == true) {
+            SCLogError(SC_ERR_INVALID_ARGUMENT, "Error, --pcap-file-continuous and --pcap-file-recursive "
+                                                "cannot be used together.");
+            CleanupPcapFileDirectoryVars(pv);
+            CleanupPcapFileThreadVars(ptv);
+            SCReturnInt(TM_ECODE_FAILED);
         }
 
         pv->delay = 30;
@@ -391,15 +402,12 @@ TmEcode ReceivePcapFileThreadDeinit(ThreadVars *tv, void *data)
 
 static double prev_signaled_ts = 0;
 
-TmEcode DecodePcapFile(ThreadVars *tv, Packet *p, void *data, PacketQueue *pq, PacketQueue *postpq)
+static TmEcode DecodePcapFile(ThreadVars *tv, Packet *p, void *data)
 {
     SCEnter();
     DecodeThreadVars *dtv = (DecodeThreadVars *)data;
 
-    /* XXX HACK: flow timeout can call us for injected pseudo packets
-     *           see bug: https://redmine.openinfosecfoundation.org/issues/1107 */
-    if (p->flags & PKT_PSEUDO_STREAM_END)
-        return TM_ECODE_OK;
+    BUG_ON(PKT_IS_PSEUDOPKT(p));
 
     /* update counters */
     DecodeUpdatePacketCounters(tv, dtv, p);
@@ -407,14 +415,16 @@ TmEcode DecodePcapFile(ThreadVars *tv, Packet *p, void *data, PacketQueue *pq, P
     double curr_ts = p->ts.tv_sec + p->ts.tv_usec / 1000.0;
     if (curr_ts < prev_signaled_ts || (curr_ts - prev_signaled_ts) > 60.0) {
         prev_signaled_ts = curr_ts;
+#if 0
         FlowWakeupFlowManagerThread();
+#endif
     }
 
-    Decoder decoder;
+    DecoderFunc decoder;
     if(ValidateLinkType(p->datalink, &decoder) == TM_ECODE_OK) {
 
         /* call the decoder */
-        decoder(tv, dtv, p, GET_PKT_DATA(p), GET_PKT_LEN(p), pq);
+        decoder(tv, dtv, p, GET_PKT_DATA(p), GET_PKT_LEN(p));
 
 #ifdef DEBUG
         BUG_ON(p->pkt_src != PKT_SRC_WIRE && p->pkt_src != PKT_SRC_FFR);

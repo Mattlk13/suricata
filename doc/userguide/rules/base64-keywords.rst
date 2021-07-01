@@ -8,7 +8,7 @@ This is achieved by using two keywords, ``base64_decode`` and ``base64_data``. B
 base64_decode
 -------------
 
-Decodes base64_data from a buffer and makes it available for the base64_data function.
+Decodes base64 data from a buffer and makes it available for the base64_data function.
 
 Syntax::
 
@@ -47,5 +47,14 @@ Example::
     http_uri = "GET /en/somestring&dGVzdAo=&not_base64"
 
     Rule:
-    alert http any any -> any any (msg:"Example"; content:"somestring"; base64_decode:bytes 8, offset 1, relative; \
-        http_uri; base64_content; content:"test"; sid:10001; rev:1;)
+    alert http any any -> any any (msg:"Example"; http.uri; content:"somestring"; \
+         base64_decode:bytes 8, offset 1, relative; \
+         base64_data; content:"test"; sid:10001; rev:1;)
+
+    Buffer content:
+    http_uri = "GET /en/somestring&dGVzdAo=&not_base64"
+
+    Rule:
+    alert http any any -> any any (msg:"Example"; content:"somestring"; http_uri; \
+         base64_decode:bytes 8, offset 1, relative; \
+         base64_data; content:"test"; sid:10001; rev:1;)

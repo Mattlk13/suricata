@@ -1,4 +1,4 @@
-/* Copyright (C) 2007-2013 Open Information Security Foundation
+/* Copyright (C) 2007-2021 Open Information Security Foundation
  *
  * You can copy, redistribute or modify this Program under the terms of
  * the GNU General Public License version 2 as published by the Free
@@ -37,15 +37,13 @@
 
 #include "flow.h"
 
+#include "util-validate.h"
 #include "util-unittest.h"
 #include "util-debug.h"
 
 #include "pkt-var.h"
 #include "util-profiling.h"
 #include "host.h"
-
-static int DecodeIEEE8021ah(ThreadVars *tv, DecodeThreadVars *dtv, Packet *p,
-        uint8_t *pkt, uint16_t len, PacketQueue *pq);
 
 /**
  * \internal
@@ -59,8 +57,11 @@ static int DecodeIEEE8021ah(ThreadVars *tv, DecodeThreadVars *dtv, Packet *p,
  * \param pq pointer to the packet queue
  *
  */
-int DecodeVLAN(ThreadVars *tv, DecodeThreadVars *dtv, Packet *p, uint8_t *pkt, uint32_t len, PacketQueue *pq)
+int DecodeVLAN(ThreadVars *tv, DecodeThreadVars *dtv, Packet *p,
+        const uint8_t *pkt, uint32_t len)
 {
+    DEBUG_VALIDATE_BUG_ON(pkt == NULL);
+
     uint32_t proto;
 
     if (p->vlan_idx == 0)
@@ -72,14 +73,15 @@ int DecodeVLAN(ThreadVars *tv, DecodeThreadVars *dtv, Packet *p, uint8_t *pkt, u
         ENGINE_SET_INVALID_EVENT(p, VLAN_HEADER_TOO_SMALL);
         return TM_ECODE_FAILED;
     }
+    if (!PacketIncreaseCheckLayers(p)) {
+        return TM_ECODE_FAILED;
+    }
     if (p->vlan_idx >= 2) {
         ENGINE_SET_EVENT(p,VLAN_HEADER_TOO_MANY_LAYERS);
         return TM_ECODE_FAILED;
     }
 
     VLANHdr *vlan_hdr = (VLANHdr *)pkt;
-    if(vlan_hdr == NULL)
-        return TM_ECODE_FAILED;
 
     proto = GET_VLAN_PROTO(vlan_hdr);
 
@@ -89,52 +91,11 @@ int DecodeVLAN(ThreadVars *tv, DecodeThreadVars *dtv, Packet *p, uint8_t *pkt, u
 
     p->vlan_id[p->vlan_idx++] = (uint16_t)GET_VLAN_ID(vlan_hdr);
 
-    switch (proto)   {
-        case ETHERNET_TYPE_IP:
-            if (unlikely(len > VLAN_HEADER_LEN + USHRT_MAX)) {
-                return TM_ECODE_FAILED;
-            }
-
-            DecodeIPV4(tv, dtv, p, pkt + VLAN_HEADER_LEN,
-                       len - VLAN_HEADER_LEN, pq);
-            break;
-        case ETHERNET_TYPE_IPV6:
-            if (unlikely(len > VLAN_HEADER_LEN + USHRT_MAX)) {
-                return TM_ECODE_FAILED;
-            }
-            DecodeIPV6(tv, dtv, p, pkt + VLAN_HEADER_LEN,
-                       len - VLAN_HEADER_LEN, pq);
-            break;
-        case ETHERNET_TYPE_PPPOE_SESS:
-            DecodePPPOESession(tv, dtv, p, pkt + VLAN_HEADER_LEN,
-                               len - VLAN_HEADER_LEN, pq);
-            break;
-        case ETHERNET_TYPE_PPPOE_DISC:
-            DecodePPPOEDiscovery(tv, dtv, p, pkt + VLAN_HEADER_LEN,
-                                 len - VLAN_HEADER_LEN, pq);
-            break;
-        case ETHERNET_TYPE_VLAN:
-        case ETHERNET_TYPE_8021AD:
-            if (p->vlan_idx >= 2) {
-                ENGINE_SET_EVENT(p,VLAN_HEADER_TOO_MANY_LAYERS);
-                return TM_ECODE_OK;
-            } else {
-                DecodeVLAN(tv, dtv, p, pkt + VLAN_HEADER_LEN,
-                        len - VLAN_HEADER_LEN, pq);
-            }
-            break;
-        case ETHERNET_TYPE_8021AH:
-            DecodeIEEE8021ah(tv, dtv, p, pkt + VLAN_HEADER_LEN,
-                    len - VLAN_HEADER_LEN, pq);
-            break;
-        case ETHERNET_TYPE_ARP:
-            break;
-        default:
-            SCLogDebug("unknown VLAN type: %" PRIx32 "", proto);
-            ENGINE_SET_INVALID_EVENT(p, VLAN_UNKNOWN_TYPE);
-            return TM_ECODE_OK;
+    if (DecodeNetworkLayer(tv, dtv, proto, p,
+                pkt + VLAN_HEADER_LEN, len - VLAN_HEADER_LEN) == false) {
+        ENGINE_SET_INVALID_EVENT(p, VLAN_UNKNOWN_TYPE);
+        return TM_ECODE_FAILED;
     }
-
     return TM_ECODE_OK;
 }
 
@@ -157,8 +118,11 @@ typedef struct IEEE8021ahHdr_ {
 
 #define IEEE8021AH_HEADER_LEN sizeof(IEEE8021ahHdr)
 
-static int DecodeIEEE8021ah(ThreadVars *tv, DecodeThreadVars *dtv, Packet *p, uint8_t *pkt, uint16_t len, PacketQueue *pq)
+int DecodeIEEE8021ah(ThreadVars *tv, DecodeThreadVars *dtv, Packet *p,
+        const uint8_t *pkt, uint32_t len)
 {
+    DEBUG_VALIDATE_BUG_ON(pkt == NULL);
+
     StatsIncr(tv, dtv->counter_ieee8021ah);
 
     if (len < IEEE8021AH_HEADER_LEN) {
@@ -167,16 +131,11 @@ static int DecodeIEEE8021ah(ThreadVars *tv, DecodeThreadVars *dtv, Packet *p, ui
     }
 
     IEEE8021ahHdr *hdr = (IEEE8021ahHdr *)pkt;
-    uint16_t next_proto = SCNtohs(hdr->type);
+    const uint16_t next_proto = SCNtohs(hdr->type);
 
-    switch (next_proto) {
-        case ETHERNET_TYPE_VLAN:
-        case ETHERNET_TYPE_8021QINQ: {
-            DecodeVLAN(tv, dtv, p, pkt + IEEE8021AH_HEADER_LEN,
-                    len - IEEE8021AH_HEADER_LEN, pq);
-            break;
-        }
-    }
+    DecodeNetworkLayer(tv, dtv, next_proto, p,
+            pkt + IEEE8021AH_HEADER_LEN, len - IEEE8021AH_HEADER_LEN);
+
     return TM_ECODE_OK;
 }
 
@@ -203,7 +162,7 @@ static int DecodeVLANtest01 (void)
     memset(&tv, 0, sizeof(ThreadVars));
     memset(&dtv, 0, sizeof(DecodeThreadVars));
 
-    DecodeVLAN(&tv, &dtv, p, raw_vlan, sizeof(raw_vlan), NULL);
+    DecodeVLAN(&tv, &dtv, p, raw_vlan, sizeof(raw_vlan));
 
     if(ENGINE_ISSET_EVENT(p,VLAN_HEADER_TOO_SMALL))  {
         SCFree(p);
@@ -239,7 +198,7 @@ static int DecodeVLANtest02 (void)
     memset(&tv, 0, sizeof(ThreadVars));
     memset(&dtv, 0, sizeof(DecodeThreadVars));
 
-    DecodeVLAN(&tv, &dtv, p, raw_vlan, sizeof(raw_vlan), NULL);
+    DecodeVLAN(&tv, &dtv, p, raw_vlan, sizeof(raw_vlan));
 
 
     if(ENGINE_ISSET_EVENT(p,VLAN_UNKNOWN_TYPE))  {
@@ -278,7 +237,7 @@ static int DecodeVLANtest03 (void)
 
     FlowInitConfig(FLOW_QUIET);
 
-    DecodeVLAN(&tv, &dtv, p, raw_vlan, sizeof(raw_vlan), NULL);
+    DecodeVLAN(&tv, &dtv, p, raw_vlan, sizeof(raw_vlan));
 
 
     if(p->vlan_id[0] == 0) {

@@ -1,4 +1,4 @@
-/* Copyright (C) 2015 Open Information Security Foundation
+/* Copyright (C) 2015-2020 Open Information Security Foundation
  *
  * You can copy, redistribute or modify this Program under the terms of
  * the GNU General Public License version 2 as published by the Free
@@ -34,15 +34,7 @@
 
 #include "app-layer-nfs-udp.h"
 
-#ifndef HAVE_RUST
-void RegisterNFSUDPParsers(void)
-{
-}
-
-#else
-
 #include "rust.h"
-#include "rust-nfs-nfs-gen.h"
 
 /* The default port to probe for echo traffic if not provided in the
  * configuration file. */
@@ -71,9 +63,9 @@ SCEnumCharMap nfs_udp_decoder_event_table[] = {
     { NULL, 0 }
 };
 
-static void *NFSStateAlloc(void)
+static void *NFSStateAlloc(void *orig_state, AppProto proto_orig)
 {
-    return rs_nfs_state_new();
+    return rs_nfs_state_new(orig_state, proto_orig);
 }
 
 static void NFSStateFree(void *state)
@@ -118,7 +110,7 @@ static AppLayerDecoderEvents *NFSGetEvents(void *tx)
  *     ALPROTO_UNKNOWN.
  */
 static AppProto NFSProbingParser(Flow *f, uint8_t direction,
-        uint8_t *input, uint32_t input_len, uint8_t *rdir)
+        const uint8_t *input, uint32_t input_len, uint8_t *rdir)
 {
     SCLogDebug("probing");
     if (input_len < NFS_MIN_FRAME_LEN) {
@@ -144,24 +136,28 @@ static AppProto NFSProbingParser(Flow *f, uint8_t direction,
     return ALPROTO_UNKNOWN;
 }
 
-static int NFSParseRequest(Flow *f, void *state,
-    AppLayerParserState *pstate, uint8_t *input, uint32_t input_len,
+static AppLayerResult NFSParseRequest(Flow *f, void *state,
+    AppLayerParserState *pstate, const uint8_t *input, uint32_t input_len,
     void *local_data, const uint8_t flags)
 {
     uint16_t file_flags = FileFlowToFlags(f, STREAM_TOSERVER);
     rs_nfs_setfileflags(0, state, file_flags);
 
-    return rs_nfs_parse_request_udp(f, state, pstate, input, input_len, local_data);
+    AppLayerResult res = rs_nfs_parse_request_udp(f, state, pstate,
+            input, input_len, local_data);
+    SCReturnStruct(res);
 }
 
-static int NFSParseResponse(Flow *f, void *state, AppLayerParserState *pstate,
-    uint8_t *input, uint32_t input_len, void *local_data,
+static AppLayerResult NFSParseResponse(Flow *f, void *state, AppLayerParserState *pstate,
+    const uint8_t *input, uint32_t input_len, void *local_data,
     const uint8_t flags)
 {
     uint16_t file_flags = FileFlowToFlags(f, STREAM_TOCLIENT);
     rs_nfs_setfileflags(1, state, file_flags);
 
-    return rs_nfs_parse_response_udp(f, state, pstate, input, input_len, local_data);
+    AppLayerResult res = rs_nfs_parse_response_udp(f, state, pstate,
+            input, input_len, local_data);
+    SCReturnStruct(res);
 }
 
 static uint64_t NFSGetTxCnt(void *state)
@@ -180,25 +176,6 @@ static AppLayerGetTxIterTuple RustNFSGetTxIterator(
         AppLayerGetTxIterState *istate)
 {
     return rs_nfs_state_get_tx_iterator(alstate, min_tx_id, (uint64_t *)istate);
-}
-
-static void NFSSetTxLogged(void *state, void *vtx, LoggerId logged)
-{
-    rs_nfs_tx_set_logged(state, vtx, logged);
-}
-
-static LoggerId NFSGetTxLogged(void *state, void *vtx)
-{
-    return rs_nfs_tx_get_logged(state, vtx);
-}
-
-/**
- * \brief Called by the application layer.
- *
- * In most cases 1 can be returned here.
- */
-static int NFSGetAlstateProgressCompletionStatus(uint8_t direction) {
-    return rs_nfs_state_progress_completion_status(direction);
 }
 
 /**
@@ -239,16 +216,6 @@ static int NFSSetTxDetectState(void *vtx, DetectEngineState *s)
 static FileContainer *NFSGetFiles(void *state, uint8_t direction)
 {
     return rs_nfs_getfiles(direction, state);
-}
-
-static void NFSSetDetectFlags(void *tx, uint8_t dir, uint64_t flags)
-{
-    rs_nfs_tx_set_detect_flags(tx, dir, flags);
-}
-
-static uint64_t NFSGetDetectFlags(void *tx, uint8_t dir)
-{
-    return rs_nfs_tx_get_detect_flags(tx, dir);
 }
 
 static StreamingBufferConfig sbcfg = STREAMING_BUFFER_CONFIG_INITIALIZER;
@@ -321,16 +288,12 @@ void RegisterNFSUDPParsers(void)
         AppLayerParserRegisterTxFreeFunc(IPPROTO_UDP, ALPROTO_NFS,
             NFSStateTxFree);
 
-        AppLayerParserRegisterLoggerFuncs(IPPROTO_UDP, ALPROTO_NFS,
-            NFSGetTxLogged, NFSSetTxLogged);
-
         /* Register a function to return the current transaction count. */
         AppLayerParserRegisterGetTxCnt(IPPROTO_UDP, ALPROTO_NFS,
             NFSGetTxCnt);
 
         /* Transaction handling. */
-        AppLayerParserRegisterGetStateProgressCompletionStatus(ALPROTO_NFS,
-            NFSGetAlstateProgressCompletionStatus);
+        AppLayerParserRegisterStateProgressCompletionStatus(ALPROTO_NFS, 1, 1);
         AppLayerParserRegisterGetStateProgressFunc(IPPROTO_UDP,
             ALPROTO_NFS, NFSGetStateProgress);
         AppLayerParserRegisterGetTx(IPPROTO_UDP, ALPROTO_NFS,
@@ -353,9 +316,8 @@ void RegisterNFSUDPParsers(void)
         AppLayerParserRegisterGetEventsFunc(IPPROTO_UDP, ALPROTO_NFS,
             NFSGetEvents);
 
-        AppLayerParserRegisterDetectFlagsFuncs(IPPROTO_UDP, ALPROTO_NFS,
-                                               NFSGetDetectFlags, NFSSetDetectFlags);
-
+        AppLayerParserRegisterTxDataFunc(IPPROTO_UDP, ALPROTO_NFS,
+                rs_nfs_get_tx_data);
     }
     else {
         SCLogNotice("NFS protocol parsing disabled.");
@@ -375,5 +337,3 @@ void NFSUDPParserRegisterTests(void)
 #ifdef UNITTESTS
 #endif
 }
-
-#endif /* HAVE_RUST */

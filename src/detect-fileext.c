@@ -54,8 +54,10 @@
 static int DetectFileextMatch (DetectEngineThreadCtx *, Flow *,
         uint8_t, File *, const Signature *, const SigMatchCtx *);
 static int DetectFileextSetup (DetectEngineCtx *, Signature *, const char *);
+#ifdef UNITTESTS
 static void DetectFileextRegisterTests(void);
-static void DetectFileextFree(void *);
+#endif
+static void DetectFileextFree(DetectEngineCtx *, void *);
 static int g_file_match_list_id = 0;
 
 /**
@@ -65,11 +67,13 @@ void DetectFileextRegister(void)
 {
     sigmatch_table[DETECT_FILEEXT].name = "fileext";
     sigmatch_table[DETECT_FILEEXT].desc = "match on the extension of a file name";
-    sigmatch_table[DETECT_FILEEXT].url = DOC_URL DOC_VERSION "/rules/file-keywords.html#fileext";
+    sigmatch_table[DETECT_FILEEXT].url = "/rules/file-keywords.html#fileext";
     sigmatch_table[DETECT_FILEEXT].FileMatch = DetectFileextMatch;
     sigmatch_table[DETECT_FILEEXT].Setup = DetectFileextSetup;
     sigmatch_table[DETECT_FILEEXT].Free  = DetectFileextFree;
+#ifdef UNITTESTS
     sigmatch_table[DETECT_FILEEXT].RegisterTests = DetectFileextRegisterTests;
+#endif
     sigmatch_table[DETECT_FILEEXT].flags = SIGMATCH_QUOTES_OPTIONAL|SIGMATCH_HANDLE_NEGATION;
     sigmatch_table[DETECT_FILEEXT].alternative = DETECT_FILE_NAME;
 
@@ -128,12 +132,13 @@ static int DetectFileextMatch (DetectEngineThreadCtx *det_ctx,
 /**
  * \brief This function is used to parse fileet
  *
+ * \param de_ctx Pointer to the detection engine context
  * \param str Pointer to the fileext value string
  *
  * \retval pointer to DetectFileextData on success
  * \retval NULL on failure
  */
-static DetectFileextData *DetectFileextParse (const char *str, bool negate)
+static DetectFileextData *DetectFileextParse (DetectEngineCtx *de_ctx, const char *str, bool negate)
 {
     DetectFileextData *fileext = NULL;
 
@@ -176,7 +181,7 @@ static DetectFileextData *DetectFileextParse (const char *str, bool negate)
 
 error:
     if (fileext != NULL)
-        DetectFileextFree(fileext);
+        DetectFileextFree(de_ctx, fileext);
     return NULL;
 
 }
@@ -197,7 +202,7 @@ static int DetectFileextSetup (DetectEngineCtx *de_ctx, Signature *s, const char
     DetectFileextData *fileext= NULL;
     SigMatch *sm = NULL;
 
-    fileext = DetectFileextParse(str, s->init_data->negated);
+    fileext = DetectFileextParse(de_ctx, str, s->init_data->negated);
     if (fileext == NULL)
         goto error;
 
@@ -217,7 +222,7 @@ static int DetectFileextSetup (DetectEngineCtx *de_ctx, Signature *s, const char
 
 error:
     if (fileext != NULL)
-        DetectFileextFree(fileext);
+        DetectFileextFree(de_ctx, fileext);
     if (sm != NULL)
         SCFree(sm);
     return -1;
@@ -229,7 +234,7 @@ error:
  *
  * \param fileext pointer to DetectFileextData
  */
-static void DetectFileextFree(void *ptr)
+static void DetectFileextFree(DetectEngineCtx *de_ctx, void *ptr)
 {
     if (ptr != NULL) {
         DetectFileextData *fileext = (DetectFileextData *)ptr;
@@ -246,9 +251,9 @@ static void DetectFileextFree(void *ptr)
  */
 static int DetectFileextTestParse01 (void)
 {
-    DetectFileextData *dfd = DetectFileextParse("doc", false);
+    DetectFileextData *dfd = DetectFileextParse(NULL, "doc", false);
     if (dfd != NULL) {
-        DetectFileextFree(dfd);
+        DetectFileextFree(NULL, dfd);
         return 1;
     }
     return 0;
@@ -261,13 +266,13 @@ static int DetectFileextTestParse02 (void)
 {
     int result = 0;
 
-    DetectFileextData *dfd = DetectFileextParse("tar.gz", false);
+    DetectFileextData *dfd = DetectFileextParse(NULL, "tar.gz", false);
     if (dfd != NULL) {
         if (dfd->len == 6 && memcmp(dfd->ext, "tar.gz", 6) == 0) {
             result = 1;
         }
 
-        DetectFileextFree(dfd);
+        DetectFileextFree(NULL, dfd);
         return result;
     }
     return 0;
@@ -280,28 +285,25 @@ static int DetectFileextTestParse03 (void)
 {
     int result = 0;
 
-    DetectFileextData *dfd = DetectFileextParse("pdf", false);
+    DetectFileextData *dfd = DetectFileextParse(NULL, "pdf", false);
     if (dfd != NULL) {
         if (dfd->len == 3 && memcmp(dfd->ext, "pdf", 3) == 0) {
             result = 1;
         }
 
-        DetectFileextFree(dfd);
+        DetectFileextFree(NULL, dfd);
         return result;
     }
     return 0;
 }
-
-#endif /* UNITTESTS */
 
 /**
  * \brief this function registers unit tests for DetectFileext
  */
 void DetectFileextRegisterTests(void)
 {
-#ifdef UNITTESTS /* UNITTESTS */
     UtRegisterTest("DetectFileextTestParse01", DetectFileextTestParse01);
     UtRegisterTest("DetectFileextTestParse02", DetectFileextTestParse02);
     UtRegisterTest("DetectFileextTestParse03", DetectFileextTestParse03);
-#endif /* UNITTESTS */
 }
+#endif /* UNITTESTS */

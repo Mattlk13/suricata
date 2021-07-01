@@ -1,4 +1,4 @@
-/* Copyright (C) 2017 Open Information Security Foundation
+/* Copyright (C) 2017-2020 Open Information Security Foundation
  *
  * You can copy, redistribute or modify this Program under the terms of
  * the GNU General Public License version 2 as published by the Free
@@ -19,14 +19,11 @@
 
 extern crate ntp_parser;
 use self::ntp_parser::*;
-use core;
-use core::{AppProto,Flow,ALPROTO_UNKNOWN,ALPROTO_FAILED};
-use applayer;
-use parser::*;
+use crate::core;
+use crate::core::{AppProto,Flow,ALPROTO_UNKNOWN,ALPROTO_FAILED};
+use crate::applayer::{self, *};
 use std;
 use std::ffi::{CStr,CString};
-
-use log::*;
 
 use nom;
 
@@ -75,7 +72,7 @@ pub struct NTPTransaction {
     /// The events associated with this transaction
     events: *mut core::AppLayerDecoderEvents,
 
-    logged: applayer::LoggerFlags,
+    tx_data: applayer::AppLayerTxData,
 }
 
 
@@ -93,7 +90,7 @@ impl NTPState {
 impl NTPState {
     /// Parse an NTP request message
     ///
-    /// Returns The number of messages parsed, or -1 on error
+    /// Returns 0 if successful, or -1 on error
     fn parse(&mut self, i: &[u8], _direction: u8) -> i32 {
         match parse_ntp(i) {
             Ok((_,ref msg)) => {
@@ -104,7 +101,7 @@ impl NTPState {
                     tx.xid = msg.ref_id;
                     self.transactions.push(tx);
                 }
-                1
+                0
             },
             Err(nom::Err::Incomplete(_)) => {
                 SCLogDebug!("Insufficient data while parsing NTP data");
@@ -159,7 +156,7 @@ impl NTPTransaction {
             id: id,
             de_state: None,
             events: std::ptr::null_mut(),
-            logged: applayer::LoggerFlags::new(),
+            tx_data: applayer::AppLayerTxData::new(),
         }
     }
 
@@ -176,14 +173,9 @@ impl Drop for NTPTransaction {
     }
 }
 
-
-
-
-
-
 /// Returns *mut NTPState
 #[no_mangle]
-pub extern "C" fn rs_ntp_state_new() -> *mut std::os::raw::c_void {
+pub extern "C" fn rs_ntp_state_new(_orig_state: *mut std::os::raw::c_void, _orig_proto: AppProto) -> *mut std::os::raw::c_void {
     let state = NTPState::new();
     let boxed = Box::new(state);
     return unsafe{std::mem::transmute(boxed)};
@@ -205,10 +197,13 @@ pub extern "C" fn rs_ntp_parse_request(_flow: *const core::Flow,
                                        input: *const u8,
                                        input_len: u32,
                                        _data: *const std::os::raw::c_void,
-                                       _flags: u8) -> i32 {
+                                       _flags: u8) -> AppLayerResult {
     let buf = build_slice!(input,input_len as usize);
     let state = cast_pointer!(state,NTPState);
-    state.parse(buf, 0)
+    if state.parse(buf, 0) < 0 {
+        return AppLayerResult::err();
+    }
+    AppLayerResult::ok()
 }
 
 #[no_mangle]
@@ -218,10 +213,13 @@ pub extern "C" fn rs_ntp_parse_response(_flow: *const core::Flow,
                                        input: *const u8,
                                        input_len: u32,
                                        _data: *const std::os::raw::c_void,
-                                       _flags: u8) -> i32 {
+                                       _flags: u8) -> AppLayerResult {
     let buf = build_slice!(input,input_len as usize);
     let state = cast_pointer!(state,NTPState);
-    state.parse(buf, 1)
+    if state.parse(buf, 1) < 0 {
+        return AppLayerResult::err();
+    }
+    AppLayerResult::ok()
 }
 
 #[no_mangle]
@@ -253,41 +251,12 @@ pub extern "C" fn rs_ntp_state_tx_free(state: *mut std::os::raw::c_void,
 }
 
 #[no_mangle]
-pub extern "C" fn rs_ntp_state_progress_completion_status(
-    _direction: u8)
-    -> std::os::raw::c_int
-{
-    return 1;
-}
-
-#[no_mangle]
 pub extern "C" fn rs_ntp_tx_get_alstate_progress(_tx: *mut std::os::raw::c_void,
                                                  _direction: u8)
                                                  -> std::os::raw::c_int
 {
     1
 }
-
-
-
-
-
-#[no_mangle]
-pub extern "C" fn rs_ntp_tx_set_logged(_state: &mut NTPState,
-                                       tx: &mut NTPTransaction,
-                                       logged: u32)
-{
-    tx.logged.set(logged);
-}
-
-#[no_mangle]
-pub extern "C" fn rs_ntp_tx_get_logged(_state: &mut NTPState,
-                                       tx: &mut NTPTransaction)
-                                       -> u32
-{
-    return tx.logged.get();
-}
-
 
 #[no_mangle]
 pub extern "C" fn rs_ntp_state_set_tx_detect_state(
@@ -394,6 +363,8 @@ pub extern "C" fn ntp_probing_parser(_flow: *const Flow,
     }
 }
 
+export_tx_data_get!(rs_ntp_get_tx_data, NTPTransaction);
+
 const PARSER_NAME : &'static [u8] = b"ntp\0";
 
 #[no_mangle]
@@ -403,8 +374,8 @@ pub unsafe extern "C" fn rs_register_ntp_parser() {
         name               : PARSER_NAME.as_ptr() as *const std::os::raw::c_char,
         default_port       : default_port.as_ptr(),
         ipproto            : core::IPPROTO_UDP,
-        probe_ts           : ntp_probing_parser,
-        probe_tc           : ntp_probing_parser,
+        probe_ts           : Some(ntp_probing_parser),
+        probe_tc           : Some(ntp_probing_parser),
         min_depth          : 0,
         max_depth          : 16,
         state_new          : rs_ntp_state_new,
@@ -414,10 +385,9 @@ pub unsafe extern "C" fn rs_register_ntp_parser() {
         parse_tc           : rs_ntp_parse_response,
         get_tx_count       : rs_ntp_state_get_tx_count,
         get_tx             : rs_ntp_state_get_tx,
-        tx_get_comp_st     : rs_ntp_state_progress_completion_status,
+        tx_comp_st_ts      : 1,
+        tx_comp_st_tc      : 1,
         tx_get_progress    : rs_ntp_tx_get_alstate_progress,
-        get_tx_logged      : None,
-        set_tx_logged      : None,
         get_de_state       : rs_ntp_state_get_tx_detect_state,
         set_de_state       : rs_ntp_state_set_tx_detect_state,
         get_events         : Some(rs_ntp_state_get_events),
@@ -425,10 +395,12 @@ pub unsafe extern "C" fn rs_register_ntp_parser() {
         get_eventinfo_byid : Some(rs_ntp_state_get_event_info_by_id),
         localstorage_new   : None,
         localstorage_free  : None,
-        get_tx_mpm_id      : None,
-        set_tx_mpm_id      : None,
         get_files          : None,
         get_tx_iterator    : None,
+        get_tx_data        : rs_ntp_get_tx_data,
+        apply_tx_config    : None,
+        flags              : APP_LAYER_PARSER_OPT_UNIDIR_TXS,
+        truncate           : None,
     };
 
     let ip_proto_str = CString::new("udp").unwrap();
@@ -462,6 +434,6 @@ mod tests {
         ];
 
         let mut state = NTPState::new();
-        assert_eq!(1, state.parse(REQ, 0));
+        assert_eq!(0, state.parse(REQ, 0));
     }
 }

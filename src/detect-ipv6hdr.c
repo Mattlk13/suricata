@@ -50,8 +50,8 @@ static InspectionBuffer *GetData(DetectEngineThreadCtx *det_ctx,
 void DetectIpv6hdrRegister(void)
 {
     sigmatch_table[DETECT_IPV6HDR].name = "ipv6.hdr";
-    sigmatch_table[DETECT_IPV6HDR].desc = "sticky buffer to match on the IPV4 header";
-    sigmatch_table[DETECT_IPV6HDR].url = DOC_URL DOC_VERSION "/rules/header-keywords.html#ipv6hdr";
+    sigmatch_table[DETECT_IPV6HDR].desc = "sticky buffer to match on the IPV6 header";
+    sigmatch_table[DETECT_IPV6HDR].url = "/rules/header-keywords.html#ipv6hdr";
     sigmatch_table[DETECT_IPV6HDR].Setup = DetectIpv6hdrSetup;
     sigmatch_table[DETECT_IPV6HDR].flags |= SIGMATCH_NOOPT | SIGMATCH_INFO_STICKY_BUFFER;
 #ifdef UNITTESTS
@@ -100,6 +100,10 @@ static InspectionBuffer *GetData(DetectEngineThreadCtx *det_ctx,
 
     InspectionBuffer *buffer = InspectionBufferGet(det_ctx, list_id);
     if (buffer->inspect == NULL) {
+        if (p->ip6h == NULL) {
+            // DETECT_PROTO_IPV6 does not prefilter
+            return NULL;
+        }
         uint32_t hlen = IPV6_HEADER_LEN + IPV6_GET_EXTHDRS_LEN(p);
         if (((uint8_t *)p->ip6h + (ptrdiff_t)hlen) >
                 ((uint8_t *)GET_PKT_DATA(p) + (ptrdiff_t)GET_PKT_LEN(p)))
@@ -108,17 +112,17 @@ static InspectionBuffer *GetData(DetectEngineThreadCtx *det_ctx,
                     ((uint8_t *)p->ip6h + (ptrdiff_t)hlen),
                     ((uint8_t *)GET_PKT_DATA(p) + (ptrdiff_t)GET_PKT_LEN(p)),
                     IPV6_GET_EXTHDRS_LEN(p));
-            return NULL;
+            SCReturnPtr(NULL, "InspectionBuffer");
         }
 
         const uint32_t data_len = hlen;
         const uint8_t *data = (const uint8_t *)p->ip6h;
 
-        InspectionBufferSetup(buffer, data, data_len);
+        InspectionBufferSetup(det_ctx, list_id, buffer, data, data_len);
         InspectionBufferApplyTransforms(buffer, transforms);
     }
 
-    return buffer;
+    SCReturnPtr(buffer, "InspectionBuffer");
 }
 
 #ifdef UNITTESTS

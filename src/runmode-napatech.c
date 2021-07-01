@@ -30,6 +30,7 @@
 #include "util-debug.h"
 #include "util-time.h"
 #include "util-cpu.h"
+#include "util-byte.h"
 #include "util-affinity.h"
 #include "util-runmodes.h"
 #include "util-device.h"
@@ -40,6 +41,8 @@
 #define NT_RUNMODE_AUTOFP  1
 #define NT_RUNMODE_WORKERS 2
 
+static const char *default_mode = "workers";
+
 #ifdef HAVE_NAPATECH
 
 #define MAX_STREAMS 256
@@ -47,6 +50,7 @@ static uint16_t num_configured_streams = 0;
 static uint16_t first_stream = 0xffff;
 static uint16_t last_stream = 0xffff;
 static int auto_config = 0;
+static int use_hw_bypass = 0;
 
 uint16_t NapatechGetNumConfiguredStreams(void)
 {
@@ -68,11 +72,16 @@ bool NapatechIsAutoConfigEnabled(void)
     return (auto_config != 0);
 }
 
+bool NapatechUseHWBypass(void)
+{
+    return (use_hw_bypass != 0);
+}
+
 #endif
 
 const char *RunModeNapatechGetDefaultMode(void)
 {
-    return "workers";
+    return default_mode;
 }
 
 void RunModeNapatechRegister(void)
@@ -103,8 +112,25 @@ static int NapatechRegisterDeviceStreams(void)
         SCLogInfo("napatech.auto-config not found in config file.  Defaulting to disabled.");
     }
 
+    if (ConfGetBool("napatech.hardware-bypass", &use_hw_bypass) == 0) {
+        SCLogInfo("napatech.hardware-bypass not found in config file.  Defaulting to disabled.");
+    }
+
+    /* use_all_streams uses existing streams created prior to starting Suricata.  auto_config
+     * automatically creates streams.  Therefore, these two options are mutually exclusive.
+     */
     if (use_all_streams && auto_config) {
-        SCLogError(SC_ERR_RUNMODE, "auto-config cannot be used with use-all-streams.");
+        FatalError(SC_ERR_FATAL,
+                   "napatech.auto-config cannot be used in configuration file at the same time as napatech.use-all-streams.");
+    }
+
+    /* to use hardware_bypass we need to configure the streams to be consistent.
+     * with the rest of the configuration.  Therefore auto_config is not a valid
+     * option.
+     */
+    if (use_hw_bypass && auto_config == 0) {
+        FatalError(SC_ERR_FATAL,
+                   "napatech auto-config must be enabled when using napatech.use_hw_bypass.");
     }
 
     /* Get the stream ID's either from the conf or by querying Napatech */
@@ -117,9 +143,8 @@ static int NapatechRegisterDeviceStreams(void)
     for (uint16_t inst = 0; inst < stream_cnt; ++inst) {
         char *plive_dev_buf = SCCalloc(1, 9);
         if (unlikely(plive_dev_buf == NULL)) {
-            SCLogError(SC_ERR_MEM_ALLOC,
-                    "Failed to allocate memory for NAPATECH stream counter.");
-            exit(EXIT_FAILURE);
+                    FatalError(SC_ERR_FATAL,
+                               "Failed to allocate memory for NAPATECH stream counter.");
         }
         snprintf(plive_dev_buf, 9, "nt%d", stream_config[inst].stream_id);
 
@@ -129,8 +154,9 @@ static int NapatechRegisterDeviceStreams(void)
                         "Registering Napatech device: %s - active stream found.",
                         plive_dev_buf);
                 SCLogError(SC_ERR_NAPATECH_STREAMS_REGISTER_FAILED,
-                        "Delete the stream or disable auto-config before running.");
-                exit(EXIT_FAILURE);
+                        "run /opt/napatech3/bin/ntpl -e \"delete=all\" to delete existing stream");
+                        FatalError(SC_ERR_FATAL,
+                                   "or disable auto-config in the conf file before running.");
             }
         } else {
             SCLogInfo("Registering Napatech device: %s - active stream%sfound.",
@@ -168,14 +194,21 @@ static void *NapatechConfigParser(const char *device)
         return NULL;
     }
 
-    /* device+5 is a pointer to the beginning of the stream id after the constant nt portion */
-    conf->stream_id = atoi(device + 2);
+    /* device+2 is a pointer to the beginning of the stream id after the constant nt portion */
+    if (StringParseUint16(&conf->stream_id, 10, 0, device + 2) < 0) {
+        SCLogError(SC_ERR_INVALID_VALUE, "Invalid value for stream_id: %s", device + 2);
+        SCFree(conf);
+        return NULL;
+    }
 
     /* Set the host buffer allowance for this stream
      * Right now we just look at the global default - there is no per-stream hba configuration
      */
     if (ConfGetInt("napatech.hba", &conf->hba) == 0) {
         conf->hba = -1;
+    } else {
+        SCLogWarning(SC_WARN_COMPATIBILITY,
+                "Napatech Host Buffer Allocation (hba) will be deprecated in Suricata v7.0.");
     }
     return (void *) conf;
 }
@@ -202,20 +235,35 @@ static int NapatechInit(int runmode)
 
     status = NapatechRegisterDeviceStreams();
     if (status < 0 || num_configured_streams <= 0) {
-        SCLogError(SC_ERR_NAPATECH_STREAMS_REGISTER_FAILED,
-                    "Unable to find existing Napatech Streams");
-        exit(EXIT_FAILURE);
+                    FatalError(SC_ERR_FATAL,
+                               "Unable to find existing Napatech Streams");
     }
 
     struct NapatechStreamDevConf *conf =
                             SCCalloc(1, sizeof (struct NapatechStreamDevConf));
     if (unlikely(conf == NULL)) {
-        SCLogError(SC_ERR_MEM_ALLOC, "Failed to allocate memory for NAPATECH device.");
-        exit(EXIT_FAILURE);
+        FatalError(SC_ERR_FATAL,
+                   "Failed to allocate memory for NAPATECH device.");
     }
 
     if ((ConfGetInt("napatech.hba", &conf->hba) != 0) && (conf->hba > 0)) {
         SCLogInfo("Host Buffer Allowance: %d", (int) conf->hba);
+    }
+
+    if (use_hw_bypass) {
+#ifdef NAPATECH_ENABLE_BYPASS
+        if (NapatechVerifyBypassSupport()) {
+            SCLogInfo("Napatech Hardware Bypass is supported and enabled.");
+        } else {
+                    FatalError(SC_ERR_FATAL,
+                               "Napatech Hardware Bypass requested in conf but is not supported by the hardware.");
+        }
+#else
+                FatalError(SC_ERR_FATAL,
+                           "Napatech Hardware Bypass requested in conf but is not enabled by the software.");
+#endif
+    } else {
+        SCLogInfo("Hardware Bypass is disabled in the conf file.");
     }
 
     /* Start a thread to process the statistics */
@@ -233,8 +281,7 @@ static int NapatechInit(int runmode)
     }
 
     if (status != 0) {
-        SCLogError(SC_ERR_RUNMODE, "Runmode start failed");
-        exit(EXIT_FAILURE);
+        FatalError(SC_ERR_FATAL, "Runmode start failed");
     }
     return 0;
 }

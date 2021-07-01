@@ -1,4 +1,4 @@
-/* Copyright (C) 2007-2010 Open Information Security Foundation
+/* Copyright (C) 2007-2021 Open Information Security Foundation
  *
  * You can copy, redistribute or modify this Program under the terms of
  * the GNU General Public License version 2 as published by the Free
@@ -29,16 +29,21 @@
 #include "flow-private.h"
 
 void InspectionBufferInit(InspectionBuffer *buffer, uint32_t initial_size);
-void InspectionBufferSetup(InspectionBuffer *buffer, const uint8_t *data, const uint32_t data_len);
+void InspectionBufferSetup(DetectEngineThreadCtx *det_ctx, const int list_id,
+        InspectionBuffer *buffer, const uint8_t *data, const uint32_t data_len);
 void InspectionBufferFree(InspectionBuffer *buffer);
 void InspectionBufferCheckAndExpand(InspectionBuffer *buffer, uint32_t min_size);
 void InspectionBufferCopy(InspectionBuffer *buffer, uint8_t *buf, uint32_t buf_len);
 void InspectionBufferApplyTransforms(InspectionBuffer *buffer,
         const DetectEngineTransforms *transforms);
+bool DetectBufferTypeValidateTransform(DetectEngineCtx *de_ctx, int sm_list,
+        const uint8_t *content, uint16_t content_len, const char **namestr);
 void InspectionBufferClean(DetectEngineThreadCtx *det_ctx);
 InspectionBuffer *InspectionBufferGet(DetectEngineThreadCtx *det_ctx, const int list_id);
-InspectionBuffer *InspectionBufferMultipleForListGet(InspectionBufferMultipleForList *fb, uint32_t local_id);
-InspectionBufferMultipleForList *InspectionBufferGetMulti(DetectEngineThreadCtx *det_ctx, const int list_id);
+void InspectionBufferSetupMulti(InspectionBuffer *buffer, const DetectEngineTransforms *transforms,
+        const uint8_t *data, const uint32_t data_len);
+InspectionBuffer *InspectionBufferMultipleForListGet(
+        DetectEngineThreadCtx *det_ctx, const int list_id, uint32_t local_id);
 
 int DetectBufferTypeRegister(const char *name);
 int DetectBufferTypeGetByName(const char *name);
@@ -52,10 +57,10 @@ const char *DetectBufferTypeGetDescriptionByName(const char *name);
 void DetectBufferTypeRegisterSetupCallback(const char *name,
         void (*Callback)(const DetectEngineCtx *, Signature *));
 void DetectBufferTypeRegisterValidateCallback(const char *name,
-        _Bool (*ValidateCallback)(const Signature *, const char **sigerror));
+        bool (*ValidateCallback)(const Signature *, const char **sigerror));
 
 int DetectBufferTypeGetByIdTransforms(DetectEngineCtx *de_ctx, const int id,
-        int *transforms, int transform_cnt);
+        TransformData *transforms, int transform_cnt);
 const char *DetectBufferTypeGetNameById(const DetectEngineCtx *de_ctx, const int id);
 bool DetectBufferTypeSupportsMpmGetById(const DetectEngineCtx *de_ctx, const int id);
 bool DetectBufferTypeSupportsPacketGetById(const DetectEngineCtx *de_ctx, const int id);
@@ -112,11 +117,8 @@ int DetectEngineTentantUnregisterVlanId(uint32_t tenant_id, uint16_t vlan_id);
 int DetectEngineTentantRegisterPcapFile(uint32_t tenant_id);
 int DetectEngineTentantUnregisterPcapFile(uint32_t tenant_id);
 
-int DetectEngineInspectGenericList(ThreadVars *, const DetectEngineCtx *,
-                                   DetectEngineThreadCtx *,
-                                   const Signature *, const SigMatchData *,
-                                   Flow *, const uint8_t, void *, void *,
-                                   uint64_t);
+int DetectEngineInspectGenericList(const DetectEngineCtx *, DetectEngineThreadCtx *,
+        const Signature *, const SigMatchData *, Flow *, const uint8_t, void *, void *, uint64_t);
 
 int DetectEngineInspectBufferGeneric(
         DetectEngineCtx *de_ctx, DetectEngineThreadCtx *det_ctx,
@@ -139,9 +141,6 @@ int DetectEngineInspectPktBufferGeneric(
  * \param progress Minimal progress value for inspect engine to run
  * \param Callback The engine callback.
  */
-void DetectAppLayerInspectEngineRegister(const char *name,
-        AppProto alproto, uint32_t dir,
-        int progress, InspectEngineFuncPtr Callback);
 void DetectAppLayerInspectEngineRegister2(const char *name,
         AppProto alproto, uint32_t dir, int progress,
         InspectEngineFuncPtr2 Callback2,
@@ -152,7 +151,7 @@ void DetectPktInspectEngineRegister(const char *name,
         InspectionBufferPktInspectFunc Callback);
 
 int DetectEngineAppInspectionEngine2Signature(DetectEngineCtx *de_ctx, Signature *s);
-void DetectEngineAppInspectionEngineSignatureFree(Signature *s);
+void DetectEngineAppInspectionEngineSignatureFree(DetectEngineCtx *, Signature *s);
 
 bool DetectEnginePktInspectionRun(ThreadVars *tv,
         DetectEngineThreadCtx *det_ctx, const Signature *s,

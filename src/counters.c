@@ -33,6 +33,7 @@
 #include "util-time.h"
 #include "util-unittest.h"
 #include "util-debug.h"
+#include "util-byte.h"
 #include "util-privs.h"
 #include "util-signal.h"
 #include "unix-manager.h"
@@ -96,11 +97,11 @@ static time_t stats_start_time;
 /** refresh interval in seconds */
 static uint32_t stats_tts = STATS_MGMTT_TTS;
 /** is the stats counter enabled? */
-static char stats_enabled = TRUE;
+static bool stats_enabled = true;
 
 /**< add decoder events as stats? enabled by default */
 bool stats_decoder_events = true;
-const char *stats_decoder_events_prefix = "decoder";
+const char *stats_decoder_events_prefix = "decoder.event";
 /**< add stream events as stats? disabled by default */
 bool stats_stream_events = false;
 
@@ -115,6 +116,11 @@ static SCMutex stats_table_mutex = SCMUTEX_INITIALIZER;
 static int stats_loggers_active = 1;
 
 static uint16_t counters_global_id = 0;
+
+bool StatsEnabled(void)
+{
+    return stats_enabled;
+}
 
 static void StatsPublicThreadContextInit(StatsPublicThreadContext *t)
 {
@@ -142,7 +148,7 @@ static void StatsPublicThreadContextCleanup(StatsPublicThreadContext *t)
 void StatsAddUI64(ThreadVars *tv, uint16_t id, uint64_t x)
 {
     StatsPrivateThreadContext *pca = &tv->perf_private_ctx;
-#ifdef UNITTESTS
+#if defined (UNITTESTS) || defined (FUZZ)
     if (pca->initialized == 0)
         return;
 #endif
@@ -163,7 +169,7 @@ void StatsAddUI64(ThreadVars *tv, uint16_t id, uint64_t x)
 void StatsIncr(ThreadVars *tv, uint16_t id)
 {
     StatsPrivateThreadContext *pca = &tv->perf_private_ctx;
-#ifdef UNITTESTS
+#if defined (UNITTESTS) || defined (FUZZ)
     if (pca->initialized == 0)
         return;
 #endif
@@ -185,7 +191,7 @@ void StatsIncr(ThreadVars *tv, uint16_t id)
 void StatsSetUI64(ThreadVars *tv, uint16_t id, uint64_t x)
 {
     StatsPrivateThreadContext *pca = &tv->perf_private_ctx;
-#ifdef UNITTESTS
+#if defined (UNITTESTS) || defined (FUZZ)
     if (pca->initialized == 0)
         return;
 #endif
@@ -228,21 +234,30 @@ static ConfNode *GetConfig(void) {
 static void StatsInitCtxPreOutput(void)
 {
     SCEnter();
-#ifdef AFLFUZZ_DISABLE_MGTTHREADS
-    stats_enabled = FALSE;
-    SCReturn;
-#endif
     ConfNode *stats = GetConfig();
     if (stats != NULL) {
         const char *enabled = ConfNodeLookupChildValue(stats, "enabled");
         if (enabled != NULL && ConfValIsFalse(enabled)) {
-            stats_enabled = FALSE;
+            stats_enabled = false;
             SCLogDebug("Stats module has been disabled");
             SCReturn;
         }
+        /* warn if we are using legacy config to enable stats */
+        ConfNode *gstats = ConfGetNode("stats");
+        if (gstats == NULL) {
+            SCLogWarning(SC_ERR_STATS_LOG_GENERIC, "global stats config is missing. "
+                    "Stats enabled through legacy stats.log. "
+                    "See %s/configuration/suricata-yaml.html#stats", GetDocURL());
+        }
+
         const char *interval = ConfNodeLookupChildValue(stats, "interval");
         if (interval != NULL)
-            stats_tts = (uint32_t) atoi(interval);
+            if (StringParseUint32(&stats_tts, 10, 0, interval) < 0) {
+                SCLogWarning(SC_ERR_INVALID_VALUE, "Invalid value for "
+                             "interval: \"%s\". Resetting to %d.", interval,
+                             STATS_MGMTT_TTS);
+                stats_tts = STATS_MGMTT_TTS;
+            }
 
         int b;
         int ret = ConfGetChildValueBool(stats, "decoder-events", &b);
@@ -256,12 +271,7 @@ static void StatsInitCtxPreOutput(void)
 
         const char *prefix = NULL;
         if (ConfGet("stats.decoder-events-prefix", &prefix) != 1) {
-            prefix = "decoder";
-            SCLogWarning(SC_WARN_DEFAULT_WILL_CHANGE, "in 5.0 the default "
-                    "for decoder event stats will go from "
-                    "'decoder.<proto>.<event>' to 'decoder.event.<proto>.<event>'. "
-                    "See ticket #2225. To suppress this message, "
-                    "set stats.decoder-events-prefix in the yaml.");
+            prefix = "decoder.event";
         }
         stats_decoder_events_prefix = prefix;
     }
@@ -276,18 +286,17 @@ static void StatsInitCtxPostOutput(void)
 
     /* init the lock used by StatsThreadStore */
     if (SCMutexInit(&stats_ctx->sts_lock, NULL) != 0) {
-        SCLogError(SC_ERR_INITIALIZATION, "error initializing sts mutex");
-        exit(EXIT_FAILURE);
+        FatalError(SC_ERR_FATAL, "error initializing sts mutex");
     }
 
-    if (!OutputStatsLoggersRegistered()) {
+    if (stats_enabled && !OutputStatsLoggersRegistered()) {
         stats_loggers_active = 0;
 
         /* if the unix command socket is enabled we do the background
          * stats sync just in case someone runs 'dump-counters' */
         if (!ConfUnixSocketIsEnable()) {
             SCLogWarning(SC_WARN_NO_STATS_LOGGERS, "stats are enabled but no loggers are active");
-            stats_enabled = FALSE;
+            stats_enabled = false;
             SCReturn;
         }
     }
@@ -491,7 +500,7 @@ static void *StatsWakeupThread(void *arg)
             tv->perf_public_ctx.perf_flag = 1;
 
             if (tv->inq != NULL) {
-                PacketQueue *q = &trans_q[tv->inq->id];
+                PacketQueue *q = tv->inq->pq;
                 SCCondSignal(&q->cond_q);
             }
 
@@ -809,15 +818,19 @@ TmEcode StatsOutputCounterSocket(json_t *cmd,
     json_t *message = NULL;
     TmEcode r = TM_ECODE_OK;
 
-    SCMutexLock(&stats_table_mutex);
-    if (stats_table.start_time == 0) {
+    if (!stats_enabled) {
         r = TM_ECODE_FAILED;
-        message = json_string("stats not yet synchronized");
+        message = json_string("stats are disabled in the config");
     } else {
-        message = StatsToJSON(&stats_table, JSON_STATS_TOTALS|JSON_STATS_THREADS);
+        SCMutexLock(&stats_table_mutex);
+        if (stats_table.start_time == 0) {
+            r = TM_ECODE_FAILED;
+            message = json_string("stats not yet synchronized");
+        } else {
+            message = StatsToJSON(&stats_table, JSON_STATS_TOTALS|JSON_STATS_THREADS);
+        }
+        SCMutexUnlock(&stats_table_mutex);
     }
-    SCMutexUnlock(&stats_table_mutex);
-
     json_object_set_new(answer, "message", message);
     return r;
 }
@@ -825,6 +838,9 @@ TmEcode StatsOutputCounterSocket(json_t *cmd,
 
 static void StatsLogSummary(void)
 {
+    if (!stats_enabled) {
+        return;
+    }
     uint64_t alerts = 0;
     SCMutexLock(&stats_table_mutex);
     if (stats_table.start_time != 0) {
@@ -849,8 +865,8 @@ void StatsInit(void)
 {
     BUG_ON(stats_ctx != NULL);
     if ( (stats_ctx = SCMalloc(sizeof(StatsGlobalContext))) == NULL) {
-        SCLogError(SC_ERR_FATAL, "Fatal error encountered in StatsInitCtx. Exiting...");
-        exit(EXIT_FAILURE);
+        FatalError(SC_ERR_FATAL,
+                   "Fatal error encountered in StatsInitCtx. Exiting...");
     }
     memset(stats_ctx, 0, sizeof(StatsGlobalContext));
 
@@ -889,30 +905,25 @@ void StatsSpawnThreads(void)
     tv_wakeup = TmThreadCreateMgmtThread(thread_name_counter_wakeup,
                                          StatsWakeupThread, 1);
     if (tv_wakeup == NULL) {
-        SCLogError(SC_ERR_THREAD_CREATE, "TmThreadCreateMgmtThread "
+        FatalError(SC_ERR_FATAL, "TmThreadCreateMgmtThread "
                    "failed");
-        exit(EXIT_FAILURE);
     }
 
     if (TmThreadSpawn(tv_wakeup) != 0) {
-        SCLogError(SC_ERR_THREAD_SPAWN, "TmThreadSpawn failed for "
+        FatalError(SC_ERR_FATAL, "TmThreadSpawn failed for "
                    "StatsWakeupThread");
-        exit(EXIT_FAILURE);
     }
 
     /* spawn the stats mgmt thread */
     tv_mgmt = TmThreadCreateMgmtThread(thread_name_counter_stats,
                                        StatsMgmtThread, 1);
     if (tv_mgmt == NULL) {
-        SCLogError(SC_ERR_THREAD_CREATE,
-                   "TmThreadCreateMgmtThread failed");
-        exit(EXIT_FAILURE);
+                   FatalError(SC_ERR_FATAL, "TmThreadCreateMgmtThread failed");
     }
 
     if (TmThreadSpawn(tv_mgmt) != 0) {
-        SCLogError(SC_ERR_THREAD_SPAWN, "TmThreadSpawn failed for "
+        FatalError(SC_ERR_FATAL, "TmThreadSpawn failed for "
                    "StatsWakeupThread");
-        exit(EXIT_FAILURE);
     }
 
     SCReturn;
@@ -988,7 +999,7 @@ uint16_t StatsRegisterMaxCounter(const char *name, struct ThreadVars_ *tv)
  */
 uint16_t StatsRegisterGlobalCounter(const char *name, uint64_t (*Func)(void))
 {
-#ifdef UNITTESTS
+#if defined (UNITTESTS) || defined (FUZZ)
     if (stats_ctx == NULL)
         return 0;
 #else
@@ -1330,9 +1341,11 @@ static int StatsTestCounterReg03(void)
 
     result = RegisterCounter("t1", "c1", &pctx);
 
+    FAIL_IF_NOT(result);
+
     StatsReleaseCounters(pctx.head);
 
-    return result;
+    PASS;
 }
 
 static int StatsTestCounterReg04(void)
@@ -1348,9 +1361,11 @@ static int StatsTestCounterReg04(void)
 
     result = RegisterCounter("t1", "c1", &pctx);
 
+    FAIL_IF_NOT(result);
+
     StatsReleaseCounters(pctx.head);
 
-    return result;
+    PASS;
 }
 
 static int StatsTestGetCntArray05(void)
@@ -1361,35 +1376,30 @@ static int StatsTestGetCntArray05(void)
     memset(&tv, 0, sizeof(ThreadVars));
 
     id = RegisterCounter("t1", "c1", &tv.perf_public_ctx);
-    if (id != 1) {
-        printf("id %d: ", id);
-        return 0;
-    }
+    FAIL_IF(id != 1);
 
     int r = StatsGetAllCountersArray(NULL, &tv.perf_private_ctx);
-    return (r == -1) ? 1 : 0;
+    FAIL_IF_NOT(r == -1);
+    PASS;
 }
 
 static int StatsTestGetCntArray06(void)
 {
     ThreadVars tv;
     int id;
-    int result;
 
     memset(&tv, 0, sizeof(ThreadVars));
 
     id = RegisterCounter("t1", "c1", &tv.perf_public_ctx);
-    if (id != 1)
-        return 0;
+    FAIL_IF(id != 1);
 
     int r = StatsGetAllCountersArray(&tv.perf_public_ctx, &tv.perf_private_ctx);
-
-    result = (r == 0) ? 1  : 0;
+    FAIL_IF_NOT(r == 0);
 
     StatsReleaseCounters(tv.perf_public_ctx.head);
     StatsReleasePrivateThreadContext(&tv.perf_private_ctx);
 
-    return result;
+    PASS;
 }
 
 static int StatsTestCntArraySize07(void)
@@ -1424,7 +1434,6 @@ static int StatsTestUpdateCounter08(void)
     ThreadVars tv;
     StatsPrivateThreadContext *pca = NULL;
     int id;
-    int result;
 
     memset(&tv, 0, sizeof(ThreadVars));
 
@@ -1436,12 +1445,12 @@ static int StatsTestUpdateCounter08(void)
     StatsIncr(&tv, id);
     StatsAddUI64(&tv, id, 100);
 
-    result = pca->head[id].value;
+    FAIL_IF_NOT(pca->head[id].value == 101);
 
     StatsReleaseCounters(tv.perf_public_ctx.head);
     StatsReleasePrivateThreadContext(pca);
 
-    return result == 101;
+    PASS;
 }
 
 static int StatsTestUpdateCounter09(void)
@@ -1449,7 +1458,6 @@ static int StatsTestUpdateCounter09(void)
     ThreadVars tv;
     StatsPrivateThreadContext *pca = NULL;
     uint16_t id1, id2;
-    int result;
 
     memset(&tv, 0, sizeof(ThreadVars));
 
@@ -1465,12 +1473,12 @@ static int StatsTestUpdateCounter09(void)
     StatsIncr(&tv, id2);
     StatsAddUI64(&tv, id2, 100);
 
-    result = (pca->head[id1].value == 0) && (pca->head[id2].value == 101);
+    FAIL_IF_NOT((pca->head[id1].value == 0) && (pca->head[id2].value == 101));
 
     StatsReleaseCounters(tv.perf_public_ctx.head);
     StatsReleasePrivateThreadContext(pca);
 
-    return result;
+    PASS;
 }
 
 static int StatsTestUpdateGlobalCounter10(void)
@@ -1500,11 +1508,12 @@ static int StatsTestUpdateGlobalCounter10(void)
     result = (1 == tv.perf_public_ctx.head->value);
     result &= (100 == tv.perf_public_ctx.head->next->value);
     result &= (101 == tv.perf_public_ctx.head->next->next->value);
+    FAIL_IF_NOT(result);
 
     StatsReleaseCounters(tv.perf_public_ctx.head);
     StatsReleasePrivateThreadContext(pca);
 
-    return result;
+    PASS;
 }
 
 static int StatsTestCounterValues11(void)
@@ -1533,17 +1542,15 @@ static int StatsTestCounterValues11(void)
     StatsUpdateCounterArray(pca, &tv.perf_public_ctx);
 
     result &= (1 == tv.perf_public_ctx.head->value);
-
     result &= (256 == tv.perf_public_ctx.head->next->value);
-
     result &= (257 == tv.perf_public_ctx.head->next->next->value);
-
     result &= (16843024 == tv.perf_public_ctx.head->next->next->next->value);
+    FAIL_IF_NOT(result);
 
     StatsReleaseCounters(tv.perf_public_ctx.head);
     StatsReleasePrivateThreadContext(pca);
 
-    return result;
+    PASS;
 }
 
 #endif

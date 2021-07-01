@@ -332,9 +332,9 @@ static int SigTest06 (void)
     p->flowflags |= FLOW_PKT_TOSERVER;
     p->flowflags |= FLOW_PKT_ESTABLISHED;
     p->flags |= PKT_HAS_FLOW|PKT_STREAM_EST;
-    f.alproto = ALPROTO_HTTP;
+    f.alproto = ALPROTO_HTTP1;
 
-    StreamTcpInitConfig(TRUE);
+    StreamTcpInitConfig(true);
 
     DetectEngineCtx *de_ctx = DetectEngineCtxInit();
     FAIL_IF_NULL(de_ctx);
@@ -350,8 +350,7 @@ static int SigTest06 (void)
     DetectEngineThreadCtxInit(&th_v, (void *)de_ctx, (void *)&det_ctx);
     FAIL_IF_NULL(det_ctx);
 
-    int r = AppLayerParserParse(NULL, alp_tctx, &f, ALPROTO_HTTP,
-                                STREAM_TOSERVER, buf, buflen);
+    int r = AppLayerParserParse(NULL, alp_tctx, &f, ALPROTO_HTTP1, STREAM_TOSERVER, buf, buflen);
     FAIL_IF(r != 0);
 
     SigMatchSignatures(&th_v, de_ctx, det_ctx, p);
@@ -362,7 +361,7 @@ static int SigTest06 (void)
     DetectEngineCtxFree(de_ctx);
     AppLayerParserThreadCtxFree(alp_tctx);
     UTHFreePackets(&p, 1);
-    StreamTcpFreeConfig(TRUE);
+    StreamTcpFreeConfig(true);
     FLOW_DESTROY(&f);
     PASS;
 }
@@ -399,9 +398,9 @@ static int SigTest07 (void)
     p->flowflags |= FLOW_PKT_TOSERVER;
     p->flowflags |= FLOW_PKT_ESTABLISHED;
     p->flags |= PKT_HAS_FLOW|PKT_STREAM_EST;
-    f.alproto = ALPROTO_HTTP;
+    f.alproto = ALPROTO_HTTP1;
 
-    StreamTcpInitConfig(TRUE);
+    StreamTcpInitConfig(true);
 
     DetectEngineCtx *de_ctx = DetectEngineCtxInit();
     if (de_ctx == NULL) {
@@ -425,8 +424,7 @@ static int SigTest07 (void)
     DetectEngineThreadCtxInit(&th_v, (void *)de_ctx,(void *)&det_ctx);
 
     FLOWLOCK_WRLOCK(&f);
-    int r = AppLayerParserParse(NULL, alp_tctx, &f, ALPROTO_HTTP,
-                                STREAM_TOSERVER, buf, buflen);
+    int r = AppLayerParserParse(NULL, alp_tctx, &f, ALPROTO_HTTP1, STREAM_TOSERVER, buf, buflen);
     if (r != 0) {
         printf("toserver chunk 1 returned %" PRId32 ", expected 0: ", r);
         result = 0;
@@ -445,7 +443,7 @@ end:
     if (alp_tctx != NULL)
         AppLayerParserThreadCtxFree(alp_tctx);
     UTHFreePackets(&p, 1);
-    StreamTcpFreeConfig(TRUE);
+    StreamTcpFreeConfig(true);
     FlowCleanupAppLayer(&f);
     FLOW_DESTROY(&f);
     SigGroupCleanup(de_ctx);
@@ -489,9 +487,9 @@ static int SigTest08 (void)
     p->flowflags |= FLOW_PKT_TOSERVER;
     p->flowflags |= FLOW_PKT_ESTABLISHED;
     p->flags |= PKT_HAS_FLOW|PKT_STREAM_EST;
-    f.alproto = ALPROTO_HTTP;
+    f.alproto = ALPROTO_HTTP1;
 
-    StreamTcpInitConfig(TRUE);
+    StreamTcpInitConfig(true);
 
     DetectEngineCtx *de_ctx = DetectEngineCtxInit();
     if (de_ctx == NULL) {
@@ -515,8 +513,7 @@ static int SigTest08 (void)
     DetectEngineThreadCtxInit(&th_v, (void *)de_ctx,(void *)&det_ctx);
 
     FLOWLOCK_WRLOCK(&f);
-    int r = AppLayerParserParse(NULL, alp_tctx, &f, ALPROTO_HTTP,
-                                STREAM_TOSERVER, buf, buflen);
+    int r = AppLayerParserParse(NULL, alp_tctx, &f, ALPROTO_HTTP1, STREAM_TOSERVER, buf, buflen);
     if (r != 0) {
         printf("toserver chunk 1 returned %" PRId32 ", expected 0: ", r);
         result = 0;
@@ -544,7 +541,7 @@ end:
     if (alp_tctx != NULL)
         AppLayerParserThreadCtxFree(alp_tctx);
     UTHFreePackets(&p, 1);
-    StreamTcpFreeConfig(TRUE);
+    StreamTcpFreeConfig(true);
     FLOW_DESTROY(&f);
     return result;
 }
@@ -581,9 +578,9 @@ static int SigTest09 (void)
     p->flowflags |= FLOW_PKT_TOSERVER;
     p->flowflags |= FLOW_PKT_ESTABLISHED;
     p->flags |= PKT_HAS_FLOW|PKT_STREAM_EST;
-    f.alproto = ALPROTO_HTTP;
+    f.alproto = ALPROTO_HTTP1;
 
-    StreamTcpInitConfig(TRUE);
+    StreamTcpInitConfig(true);
 
     DetectEngineCtx *de_ctx = DetectEngineCtxInit();
     if (de_ctx == NULL) {
@@ -607,8 +604,7 @@ static int SigTest09 (void)
     DetectEngineThreadCtxInit(&th_v, (void *)de_ctx,(void *)&det_ctx);
 
     FLOWLOCK_WRLOCK(&f);
-    int r = AppLayerParserParse(NULL, alp_tctx, &f, ALPROTO_HTTP,
-                                STREAM_TOSERVER, buf, buflen);
+    int r = AppLayerParserParse(NULL, alp_tctx, &f, ALPROTO_HTTP1, STREAM_TOSERVER, buf, buflen);
     if (r != 0) {
         printf("toserver chunk 1 returned %" PRId32 ", expected 0: ", r);
         result = 0;
@@ -633,7 +629,7 @@ end:
     if (alp_tctx != NULL)
         AppLayerParserThreadCtxFree(alp_tctx);
     UTHFreePackets(&p, 1);
-    StreamTcpFreeConfig(TRUE);
+    StreamTcpFreeConfig(true);
     FLOW_DESTROY(&f);
     return result;
 }
@@ -665,9 +661,9 @@ static int SigTest10 (void)
     p->flowflags |= FLOW_PKT_TOSERVER;
     p->flowflags |= FLOW_PKT_ESTABLISHED;
     p->flags |= PKT_HAS_FLOW|PKT_STREAM_EST;
-    f.alproto = ALPROTO_HTTP;
+    f.alproto = ALPROTO_HTTP1;
 
-    StreamTcpInitConfig(TRUE);
+    StreamTcpInitConfig(true);
 
     DetectEngineCtx *de_ctx = DetectEngineCtxInit();
     if (de_ctx == NULL) {
@@ -691,8 +687,7 @@ static int SigTest10 (void)
     DetectEngineThreadCtxInit(&th_v, (void *)de_ctx,(void *)&det_ctx);
 
     FLOWLOCK_WRLOCK(&f);
-    int r = AppLayerParserParse(NULL, alp_tctx, &f, ALPROTO_HTTP,
-                                STREAM_TOSERVER, buf, buflen);
+    int r = AppLayerParserParse(NULL, alp_tctx, &f, ALPROTO_HTTP1, STREAM_TOSERVER, buf, buflen);
     if (r != 0) {
         printf("toserver chunk 1 returned %" PRId32 ", expected 0: ", r);
         result = 0;
@@ -717,7 +712,7 @@ static int SigTest10 (void)
     if (alp_tctx != NULL)
         AppLayerParserThreadCtxFree(alp_tctx);
     UTHFreePackets(&p, 1);
-    StreamTcpFreeConfig(TRUE);
+    StreamTcpFreeConfig(true);
     FLOW_DESTROY(&f);
     return result;
 }
@@ -747,9 +742,9 @@ static int SigTest11 (void)
     p->flow = &f;
     p->flowflags |= FLOW_PKT_TOSERVER;
     p->flags |= PKT_HAS_FLOW|PKT_STREAM_EST;
-    f.alproto = ALPROTO_HTTP;
+    f.alproto = ALPROTO_HTTP1;
 
-    StreamTcpInitConfig(TRUE);
+    StreamTcpInitConfig(true);
 
     DetectEngineCtx *de_ctx = DetectEngineCtxInit();
     if (de_ctx == NULL) {
@@ -781,7 +776,7 @@ static int SigTest11 (void)
         DetectEngineThreadCtxDeinit(&th_v, (void *)det_ctx);
     DetectEngineCtxFree(de_ctx);
     UTHFreePackets(&p, 1);
-    StreamTcpFreeConfig(TRUE);
+    StreamTcpFreeConfig(true);
     FLOW_DESTROY(&f);
     return result;
 }
@@ -3415,7 +3410,7 @@ static int SigTest36ContentAndIsdataatKeywords01 (void)
     memset(&th_v, 0, sizeof(th_v));
 
     FlowInitConfig(FLOW_QUIET);
-    DecodeEthernet(&th_v, &dtv, p, raw_eth, sizeof(raw_eth), NULL);
+    DecodeEthernet(&th_v, &dtv, p, raw_eth, sizeof(raw_eth));
 
 
     DetectEngineCtx *de_ctx = DetectEngineCtxInit();
@@ -3534,7 +3529,7 @@ static int SigTest37ContentAndIsdataatKeywords02 (void)
     memset(&th_v, 0, sizeof(th_v));
 
     FlowInitConfig(FLOW_QUIET);
-    DecodeEthernet(&th_v, &dtv, p, raw_eth, sizeof(raw_eth), NULL);
+    DecodeEthernet(&th_v, &dtv, p, raw_eth, sizeof(raw_eth));
 
 
     DetectEngineCtx *de_ctx = DetectEngineCtxInit();
@@ -3661,7 +3656,7 @@ static int SigTest40NoPacketInspection01(void)
     DetectEngineThreadCtxInit(&th_v, (void *)de_ctx,(void *)&det_ctx);
     det_ctx->de_ctx = de_ctx;
 
-    Detect(&th_v, p, det_ctx, &pq, NULL);
+    Detect(&th_v, p, det_ctx);
     if (PacketAlertCheck(p, 2))
         result = 0;
     else
@@ -4280,7 +4275,7 @@ static int SigTestWithin01 (void)
     if (unlikely(p1 == NULL))
         return 0;
     memset(p1, 0, SIZE_OF_PACKET);
-    DecodeEthernet(&th_v, &dtv, p1, rawpkt1, sizeof(rawpkt1), NULL);
+    DecodeEthernet(&th_v, &dtv, p1, rawpkt1, sizeof(rawpkt1));
     SigMatchSignatures(&th_v, de_ctx, det_ctx, p1);
     if (!(PacketAlertCheck(p1, 556))) {
         printf("failed to match on packet 1: ");
@@ -4292,7 +4287,7 @@ static int SigTestWithin01 (void)
     if (unlikely(p2 == NULL))
         return 0;
     memset(p2, 0, SIZE_OF_PACKET);
-    DecodeEthernet(&th_v, &dtv, p2, rawpkt2, sizeof(rawpkt2), NULL);
+    DecodeEthernet(&th_v, &dtv, p2, rawpkt2, sizeof(rawpkt2));
     SigMatchSignatures(&th_v, de_ctx, det_ctx, p2);
     if (!(PacketAlertCheck(p2, 556))) {
         printf("failed to match on packet 2: ");
@@ -4304,7 +4299,7 @@ static int SigTestWithin01 (void)
     if (unlikely(p3 == NULL))
         return 0;
     memset(p3, 0, SIZE_OF_PACKET);
-    DecodeEthernet(&th_v, &dtv, p3, rawpkt3, sizeof(rawpkt3), NULL);
+    DecodeEthernet(&th_v, &dtv, p3, rawpkt3, sizeof(rawpkt3));
     SigMatchSignatures(&th_v, de_ctx, det_ctx, p3);
     if (!(PacketAlertCheck(p3, 556))) {
         printf("failed to match on packet 3: ");
@@ -4316,7 +4311,7 @@ static int SigTestWithin01 (void)
     if (unlikely(p4 == NULL))
         return 0;
     memset(p4, 0, SIZE_OF_PACKET);
-    DecodeEthernet(&th_v, &dtv, p4, rawpkt4, sizeof(rawpkt4), NULL);
+    DecodeEthernet(&th_v, &dtv, p4, rawpkt4, sizeof(rawpkt4));
     SigMatchSignatures(&th_v, de_ctx, det_ctx, p4);
     if (!(PacketAlertCheck(p4, 556))) {
         printf("failed to match on packet 4: ");
@@ -4432,20 +4427,20 @@ static int SigTestDetectAlertCounter(void)
     StatsSetupPrivate(&tv);
 
     p = UTHBuildPacket((uint8_t *)"boo", strlen("boo"), IPPROTO_TCP);
-    Detect(&tv, p, det_ctx, NULL, NULL);
+    Detect(&tv, p, det_ctx);
     FAIL_IF_NOT(StatsGetLocalCounterValue(&tv, det_ctx->counter_alerts) == 1);
 
-    Detect(&tv, p, det_ctx, NULL, NULL);
+    Detect(&tv, p, det_ctx);
     FAIL_IF_NOT(StatsGetLocalCounterValue(&tv, det_ctx->counter_alerts) == 2);
     UTHFreePackets(&p, 1);
 
     p = UTHBuildPacket((uint8_t *)"roo", strlen("roo"), IPPROTO_TCP);
-    Detect(&tv, p, det_ctx, NULL, NULL);
+    Detect(&tv, p, det_ctx);
     FAIL_IF_NOT(StatsGetLocalCounterValue(&tv, det_ctx->counter_alerts) == 2);
     UTHFreePackets(&p, 1);
 
     p = UTHBuildPacket((uint8_t *)"laboosa", strlen("laboosa"), IPPROTO_TCP);
-    Detect(&tv, p, det_ctx, NULL, NULL);
+    Detect(&tv, p, det_ctx);
     FAIL_IF_NOT(StatsGetLocalCounterValue(&tv, det_ctx->counter_alerts) == 3);
     UTHFreePackets(&p, 1);
 
@@ -4487,9 +4482,9 @@ static int SigTestDropFlow01(void)
     p->flowflags |= FLOW_PKT_TOSERVER;
     p->flowflags |= FLOW_PKT_ESTABLISHED;
     p->flags |= PKT_HAS_FLOW|PKT_STREAM_EST;
-    f.alproto = ALPROTO_HTTP;
+    f.alproto = ALPROTO_HTTP1;
 
-    StreamTcpInitConfig(TRUE);
+    StreamTcpInitConfig(true);
 
     DetectEngineCtx *de_ctx = DetectEngineCtxInit();
     if (de_ctx == NULL) {
@@ -4508,8 +4503,8 @@ static int SigTestDropFlow01(void)
     DetectEngineThreadCtxInit(&tv, (void *)de_ctx, (void *)&det_ctx);
 
     FLOWLOCK_WRLOCK(&f);
-    int r = AppLayerParserParse(NULL, alp_tctx, &f, ALPROTO_HTTP,
-                                STREAM_TOSERVER, http_buf1, http_buf1_len);
+    int r = AppLayerParserParse(
+            NULL, alp_tctx, &f, ALPROTO_HTTP1, STREAM_TOSERVER, http_buf1, http_buf1_len);
     if (r != 0) {
         printf("toserver chunk 1 returned %" PRId32 ", expected 0: ", r);
         FLOWLOCK_UNLOCK(&f);
@@ -4550,7 +4545,7 @@ end:
     if (de_ctx != NULL)
         DetectEngineCtxFree(de_ctx);
 
-    StreamTcpFreeConfig(TRUE);
+    StreamTcpFreeConfig(true);
     FLOW_DESTROY(&f);
 
     UTHFreePackets(&p, 1);
@@ -4590,9 +4585,9 @@ static int SigTestDropFlow02(void)
     p->flowflags |= FLOW_PKT_TOSERVER;
     p->flowflags |= FLOW_PKT_ESTABLISHED;
     p->flags |= PKT_HAS_FLOW|PKT_STREAM_EST;
-    f.alproto = ALPROTO_HTTP;
+    f.alproto = ALPROTO_HTTP1;
 
-    StreamTcpInitConfig(TRUE);
+    StreamTcpInitConfig(true);
 
     DetectEngineCtx *de_ctx = DetectEngineCtxInit();
     if (de_ctx == NULL) {
@@ -4611,8 +4606,8 @@ static int SigTestDropFlow02(void)
     DetectEngineThreadCtxInit(&tv, (void *)de_ctx, (void *)&det_ctx);
 
     FLOWLOCK_WRLOCK(&f);
-    int r = AppLayerParserParse(NULL, alp_tctx, &f, ALPROTO_HTTP,
-                                STREAM_TOSERVER, http_buf1, http_buf1_len);
+    int r = AppLayerParserParse(
+            NULL, alp_tctx, &f, ALPROTO_HTTP1, STREAM_TOSERVER, http_buf1, http_buf1_len);
     if (r != 0) {
         printf("toserver chunk 1 returned %" PRId32 ", expected 0: ", r);
         FLOWLOCK_UNLOCK(&f);
@@ -4654,7 +4649,7 @@ end:
     if (de_ctx != NULL)
         DetectEngineCtxFree(de_ctx);
 
-    StreamTcpFreeConfig(TRUE);
+    StreamTcpFreeConfig(true);
     FLOW_DESTROY(&f);
 
     UTHFreePackets(&p, 1);
@@ -4711,9 +4706,9 @@ static int SigTestDropFlow03(void)
     p2->flowflags |= FLOW_PKT_TOSERVER;
     p2->flowflags |= FLOW_PKT_ESTABLISHED;
     p2->flags |= PKT_HAS_FLOW|PKT_STREAM_EST;
-    f.alproto = ALPROTO_HTTP;
+    f.alproto = ALPROTO_HTTP1;
 
-    StreamTcpInitConfig(TRUE);
+    StreamTcpInitConfig(true);
 
     DetectEngineCtx *de_ctx = DetectEngineCtxInit();
     if (de_ctx == NULL) {
@@ -4742,8 +4737,8 @@ static int SigTestDropFlow03(void)
     DetectEngineThreadCtxInit(&tv, (void *)de_ctx, (void *)&det_ctx);
 
     FLOWLOCK_WRLOCK(&f);
-    int r = AppLayerParserParse(NULL, alp_tctx, &f, ALPROTO_HTTP,
-                                STREAM_TOSERVER, http_buf1, http_buf1_len);
+    int r = AppLayerParserParse(
+            NULL, alp_tctx, &f, ALPROTO_HTTP1, STREAM_TOSERVER, http_buf1, http_buf1_len);
     if (r != 0) {
         printf("toserver chunk 1 returned %" PRId32 ", expected 0: ", r);
         FLOWLOCK_UNLOCK(&f);
@@ -4788,8 +4783,8 @@ static int SigTestDropFlow03(void)
     }
 
     FLOWLOCK_WRLOCK(&f);
-    r = AppLayerParserParse(NULL, alp_tctx, &f, ALPROTO_HTTP,
-                            STREAM_TOSERVER, http_buf2, http_buf2_len);
+    r = AppLayerParserParse(
+            NULL, alp_tctx, &f, ALPROTO_HTTP1, STREAM_TOSERVER, http_buf2, http_buf2_len);
     if (r != 0) {
         printf("toserver chunk 2 returned %" PRId32 ", expected 0: ", r);
         FLOWLOCK_UNLOCK(&f);
@@ -4827,7 +4822,7 @@ end:
     if (de_ctx != NULL)
         DetectEngineCtxFree(de_ctx);
 
-    StreamTcpFreeConfig(TRUE);
+    StreamTcpFreeConfig(true);
     FLOW_DESTROY(&f);
 
     UTHFreePackets(&p1, 1);
@@ -4885,9 +4880,9 @@ static int SigTestDropFlow04(void)
     p2->flowflags |= FLOW_PKT_TOSERVER;
     p2->flowflags |= FLOW_PKT_ESTABLISHED;
     p2->flags |= PKT_HAS_FLOW|PKT_STREAM_EST;
-    f.alproto = ALPROTO_HTTP;
+    f.alproto = ALPROTO_HTTP1;
 
-    StreamTcpInitConfig(TRUE);
+    StreamTcpInitConfig(true);
 
     DetectEngineCtx *de_ctx = DetectEngineCtxInit();
     if (de_ctx == NULL) {
@@ -4915,8 +4910,8 @@ static int SigTestDropFlow04(void)
     DetectEngineThreadCtxInit(&tv, (void *)de_ctx, (void *)&det_ctx);
 
     FLOWLOCK_WRLOCK(&f);
-    int r = AppLayerParserParse(NULL, alp_tctx, &f, ALPROTO_HTTP,
-                                STREAM_TOSERVER, http_buf1, http_buf1_len);
+    int r = AppLayerParserParse(
+            NULL, alp_tctx, &f, ALPROTO_HTTP1, STREAM_TOSERVER, http_buf1, http_buf1_len);
     if (r != 0) {
         printf("toserver chunk 1 returned %" PRId32 ", expected 0: ", r);
         FLOWLOCK_UNLOCK(&f);
@@ -4971,8 +4966,8 @@ static int SigTestDropFlow04(void)
     }
 
     FLOWLOCK_WRLOCK(&f);
-    r = AppLayerParserParse(NULL, alp_tctx, &f, ALPROTO_HTTP,
-                            STREAM_TOSERVER, http_buf2, http_buf2_len);
+    r = AppLayerParserParse(
+            NULL, alp_tctx, &f, ALPROTO_HTTP1, STREAM_TOSERVER, http_buf2, http_buf2_len);
     if (r != 0) {
         printf("toserver chunk 2 returned %" PRId32 ", expected 0: ", r);
         FLOWLOCK_UNLOCK(&f);
@@ -5012,7 +5007,7 @@ end:
     if (de_ctx != NULL)
         DetectEngineCtxFree(de_ctx);
 
-    StreamTcpFreeConfig(TRUE);
+    StreamTcpFreeConfig(true);
     FLOW_DESTROY(&f);
 
     UTHFreePackets(&p1, 1);

@@ -45,6 +45,7 @@
 
 #include "detect-engine-payload.h"
 #include "detect-engine-dcepayload.h"
+#include "detect-dns-opcode.h"
 #include "detect-dns-query.h"
 #include "detect-tls-sni.h"
 #include "detect-tls-certs.h"
@@ -70,6 +71,8 @@
 #include "detect-engine-event.h"
 #include "decode.h"
 
+#include "detect-config.h"
+
 #include "detect-smb-share.h"
 
 #include "detect-base64-decode.h"
@@ -88,6 +91,7 @@
 #include "detect-nocase.h"
 #include "detect-rawbytes.h"
 #include "detect-bytetest.h"
+#include "detect-bytemath.h"
 #include "detect-bytejump.h"
 #include "detect-sameip.h"
 #include "detect-l3proto.h"
@@ -120,6 +124,8 @@
 #include "detect-filesha1.h"
 #include "detect-filesha256.h"
 #include "detect-filesize.h"
+#include "detect-dataset.h"
+#include "detect-datarep.h"
 #include "detect-dsize.h"
 #include "detect-flowvar.h"
 #include "detect-flowint.h"
@@ -137,6 +143,7 @@
 #include "detect-icode.h"
 #include "detect-icmp-id.h"
 #include "detect-icmp-seq.h"
+#include "detect-icmpv4hdr.h"
 #include "detect-dce-iface.h"
 #include "detect-dce-opnum.h"
 #include "detect-dce-stub-data.h"
@@ -155,6 +162,7 @@
 #include "detect-http-stat-msg.h"
 #include "detect-http-request-line.h"
 #include "detect-http-response-line.h"
+#include "detect-http2.h"
 #include "detect-byte-extract.h"
 #include "detect-file-data.h"
 #include "detect-pkt-data.h"
@@ -170,17 +178,46 @@
 #include "detect-tcphdr.h"
 #include "detect-tcpmss.h"
 #include "detect-udphdr.h"
+#include "detect-icmpv6hdr.h"
+#include "detect-icmpv6-mtu.h"
 #include "detect-ipv4hdr.h"
 #include "detect-ipv6hdr.h"
 #include "detect-krb5-cname.h"
 #include "detect-krb5-errcode.h"
 #include "detect-krb5-msgtype.h"
 #include "detect-krb5-sname.h"
+#include "detect-sip-method.h"
+#include "detect-sip-uri.h"
+#include "detect-sip-protocol.h"
+#include "detect-sip-stat-code.h"
+#include "detect-sip-stat-msg.h"
+#include "detect-sip-request-line.h"
+#include "detect-sip-response-line.h"
+#include "detect-rfb-secresult.h"
+#include "detect-rfb-sectype.h"
+#include "detect-rfb-name.h"
 #include "detect-target.h"
 #include "detect-template-rust-buffer.h"
 #include "detect-snmp-version.h"
 #include "detect-snmp-community.h"
 #include "detect-snmp-pdu_type.h"
+#include "detect-mqtt-type.h"
+#include "detect-mqtt-flags.h"
+#include "detect-mqtt-qos.h"
+#include "detect-mqtt-protocol-version.h"
+#include "detect-mqtt-reason-code.h"
+#include "detect-mqtt-connect-flags.h"
+#include "detect-mqtt-connect-clientid.h"
+#include "detect-mqtt-connect-username.h"
+#include "detect-mqtt-connect-password.h"
+#include "detect-mqtt-connect-willtopic.h"
+#include "detect-mqtt-connect-willmessage.h"
+#include "detect-mqtt-connack-sessionpresent.h"
+#include "detect-mqtt-publish-topic.h"
+#include "detect-mqtt-publish-message.h"
+#include "detect-mqtt-subscribe-topic.h"
+#include "detect-mqtt-unsubscribe-topic.h"
+
 #include "detect-template-buffer.h"
 #include "detect-bypass.h"
 #include "detect-ftpdata.h"
@@ -191,6 +228,9 @@
 #include "detect-transform-md5.h"
 #include "detect-transform-sha1.h"
 #include "detect-transform-sha256.h"
+#include "detect-transform-dotprefix.h"
+#include "detect-transform-pcrexform.h"
+#include "detect-transform-urldecode.h"
 
 #include "util-rule-vars.h"
 
@@ -206,12 +246,24 @@
 #include "detect-ssh-proto-version.h"
 #include "detect-ssh-software.h"
 #include "detect-ssh-software-version.h"
+#include "detect-ssh-hassh.h"
+#include "detect-ssh-hassh-server.h"
+#include "detect-ssh-hassh-string.h"
+#include "detect-ssh-hassh-server-string.h"
 #include "detect-http-stat-code.h"
 #include "detect-ssl-version.h"
 #include "detect-ssl-state.h"
 #include "detect-modbus.h"
 #include "detect-cipservice.h"
 #include "detect-dnp3.h"
+#include "detect-ike-exch-type.h"
+#include "detect-ike-spi.h"
+#include "detect-ike-vendor.h"
+#include "detect-ike-chosen-sa.h"
+#include "detect-ike-key-exchange-payload-length.h"
+#include "detect-ike-nonce-payload-length.h"
+#include "detect-ike-nonce-payload.h"
+#include "detect-ike-key-exchange-payload.h"
 
 #include "action-globals.h"
 #include "tm-threads.h"
@@ -299,7 +351,7 @@ static void SigMultilinePrint(int i, const char *prefix)
     printf("%sFeatures: ", prefix);
     PrintFeatureList(&sigmatch_table[i], ',');
     if (sigmatch_table[i].url) {
-        printf("\n%sDocumentation: %s", prefix, sigmatch_table[i].url);
+        printf("\n%sDocumentation: %s%s", prefix, GetDocURL(), sigmatch_table[i].url);
     }
     if (sigmatch_table[i].alternative) {
         printf("\n%sReplaced by: %s", prefix, sigmatch_table[sigmatch_table[i].alternative].name);
@@ -307,7 +359,7 @@ static void SigMultilinePrint(int i, const char *prefix)
     printf("\n");
 }
 
-void SigTableList(const char *keyword)
+int SigTableList(const char *keyword)
 {
     size_t size = sizeof(sigmatch_table) / sizeof(SigTableElmt);
     size_t i;
@@ -347,7 +399,7 @@ void SigTableList(const char *keyword)
                 PrintFeatureList(&sigmatch_table[i], ':');
                 printf(";");
                 if (sigmatch_table[i].url) {
-                    printf("%s", sigmatch_table[i].url);
+                    printf("%s%s", GetDocURL(), sigmatch_table[i].url);
                 }
                 printf(";");
                 printf("\n");
@@ -370,14 +422,16 @@ void SigTableList(const char *keyword)
                 printf("= %s =\n", sigmatch_table[i].name);
                 if (sigmatch_table[i].flags & SIGMATCH_NOT_BUILT) {
                     printf("Not built-in\n");
-                    return;
+                    return TM_ECODE_FAILED;
                 }
                 SigMultilinePrint(i, "");
-                return;
+                return TM_ECODE_DONE;
             }
         }
+        printf("Non existing keyword\n");
+        return TM_ECODE_FAILED;
     }
-    return;
+    return TM_ECODE_DONE;
 }
 
 void SigTableSetup(void)
@@ -431,12 +485,23 @@ void SigTableSetup(void)
 
     DetectHttpStatMsgRegister();
     DetectHttpStatCodeRegister();
+    DetectHttp2Register();
 
     DetectDnsQueryRegister();
+    DetectDnsOpcodeRegister();
     DetectModbusRegister();
     DetectCipServiceRegister();
     DetectEnipCommandRegister();
     DetectDNP3Register();
+
+    DetectIkeExchTypeRegister();
+    DetectIkeSpiRegister();
+    DetectIkeVendorRegister();
+    DetectIkeChosenSaRegister();
+    DetectIkeKeyExchangePayloadLengthRegister();
+    DetectIkeNoncePayloadLengthRegister();
+    DetectIkeNonceRegister();
+    DetectIkeKeyExchangeRegister();
 
     DetectTlsSniRegister();
     DetectTlsIssuerRegister();
@@ -459,6 +524,7 @@ void SigTableSetup(void)
     DetectRawbytesRegister();
     DetectBytetestRegister();
     DetectBytejumpRegister();
+    DetectBytemathRegister();
     DetectSameipRegister();
     DetectGeoipRegister();
     DetectL3ProtoRegister();
@@ -475,6 +541,8 @@ void SigTableSetup(void)
     DetectIsdataatRegister();
     DetectIdRegister();
     DetectDsizeRegister();
+    DetectDatasetRegister();
+    DetectDatarepRegister();
     DetectFlowvarRegister();
     DetectFlowintRegister();
     DetectPktvarRegister();
@@ -498,6 +566,7 @@ void SigTableSetup(void)
     DetectICodeRegister();
     DetectIcmpIdRegister();
     DetectIcmpSeqRegister();
+    DetectIcmpv4HdrRegister();
     DetectDceIfaceRegister();
     DetectDceOpnumRegister();
     DetectDceStubDataRegister();
@@ -516,6 +585,10 @@ void SigTableSetup(void)
     DetectSshVersionRegister();
     DetectSshSoftwareRegister();
     DetectSshSoftwareVersionRegister();
+    DetectSshHasshRegister();
+    DetectSshHasshServerRegister();
+    DetectSshHasshStringRegister();
+    DetectSshHasshServerStringRegister();
     DetectSslStateRegister();
     DetectSslVersionRegister();
     DetectByteExtractRegister();
@@ -531,35 +604,68 @@ void SigTableSetup(void)
     DetectTcphdrRegister();
     DetectUdphdrRegister();
     DetectTcpmssRegister();
+    DetectICMPv6hdrRegister();
+    DetectICMPv6mtuRegister();
     DetectIpv4hdrRegister();
     DetectIpv6hdrRegister();
     DetectKrb5CNameRegister();
     DetectKrb5ErrCodeRegister();
     DetectKrb5MsgTypeRegister();
     DetectKrb5SNameRegister();
+    DetectSipMethodRegister();
+    DetectSipUriRegister();
+    DetectSipProtocolRegister();
+    DetectSipStatCodeRegister();
+    DetectSipStatMsgRegister();
+    DetectSipRequestLineRegister();
+    DetectSipResponseLineRegister();
+    DetectRfbSecresultRegister();
+    DetectRfbSectypeRegister();
+    DetectRfbNameRegister();
     DetectTargetRegister();
     DetectTemplateRustBufferRegister();
     DetectSNMPVersionRegister();
     DetectSNMPCommunityRegister();
     DetectSNMPPduTypeRegister();
+    DetectMQTTTypeRegister();
+    DetectMQTTFlagsRegister();
+    DetectMQTTQosRegister();
+    DetectMQTTProtocolVersionRegister();
+    DetectMQTTReasonCodeRegister();
+    DetectMQTTConnectFlagsRegister();
+    DetectMQTTConnectClientIDRegister();
+    DetectMQTTConnectUsernameRegister();
+    DetectMQTTConnectPasswordRegister();
+    DetectMQTTConnectWillTopicRegister();
+    DetectMQTTConnectWillMessageRegister();
+    DetectMQTTConnackSessionPresentRegister();
+    DetectMQTTPublishTopicRegister();
+    DetectMQTTPublishMessageRegister();
+    DetectMQTTSubscribeTopicRegister();
+    DetectMQTTUnsubscribeTopicRegister();
+
     DetectTemplateBufferRegister();
     DetectBypassRegister();
+    DetectConfigRegister();
 
     DetectTransformCompressWhitespaceRegister();
     DetectTransformStripWhitespaceRegister();
     DetectTransformMd5Register();
     DetectTransformSha1Register();
     DetectTransformSha256Register();
+    DetectTransformDotPrefixRegister();
+    DetectTransformPcrexformRegister();
+    DetectTransformUrlDecodeRegister();
 
     /* close keyword registration */
     DetectBufferTypeCloseRegistration();
 }
 
+#ifdef UNITTESTS
 void SigTableRegisterTests(void)
 {
     /* register the tests */
-    int i = 0;
-    for (i = 0; i < DETECT_TBLSIZE; i++) {
+    for (int i = 0; i < DETECT_TBLSIZE; i++) {
         g_ut_modules++;
         if (sigmatch_table[i].RegisterTests != NULL) {
             sigmatch_table[i].RegisterTests();
@@ -574,3 +680,4 @@ void SigTableRegisterTests(void)
         }
     }
 }
+#endif

@@ -50,7 +50,7 @@ void DetectUdphdrRegister(void)
 {
     sigmatch_table[DETECT_UDPHDR].name = "udp.hdr";
     sigmatch_table[DETECT_UDPHDR].desc = "sticky buffer to match on the UDP header";
-    sigmatch_table[DETECT_UDPHDR].url = DOC_URL DOC_VERSION "/rules/header-keywords.html#udphdr";
+    sigmatch_table[DETECT_UDPHDR].url = "/rules/header-keywords.html#udphdr";
     sigmatch_table[DETECT_UDPHDR].Setup = DetectUdphdrSetup;
     sigmatch_table[DETECT_UDPHDR].flags |= SIGMATCH_NOOPT | SIGMATCH_INFO_STICKY_BUFFER;
 #ifdef UNITTESTS
@@ -99,6 +99,9 @@ static InspectionBuffer *GetData(DetectEngineThreadCtx *det_ctx,
 
     InspectionBuffer *buffer = InspectionBufferGet(det_ctx, list_id);
     if (buffer->inspect == NULL) {
+        if (p->udph == NULL) {
+            return NULL;
+        }
         if (((uint8_t *)p->udph + (ptrdiff_t)UDP_HEADER_LEN) >
                 ((uint8_t *)GET_PKT_DATA(p) + (ptrdiff_t)GET_PKT_LEN(p)))
         {
@@ -111,7 +114,7 @@ static InspectionBuffer *GetData(DetectEngineThreadCtx *det_ctx,
         const uint32_t data_len = UDP_HEADER_LEN;
         const uint8_t *data = (const uint8_t *)p->udph;
 
-        InspectionBufferSetup(buffer, data, data_len);
+        InspectionBufferSetup(det_ctx, list_id, buffer, data, data_len);
         InspectionBufferApplyTransforms(buffer, transforms);
     }
 

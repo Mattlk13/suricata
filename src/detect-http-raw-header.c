@@ -57,7 +57,7 @@ static int DetectHttpRawHeaderSetupSticky(DetectEngineCtx *de_ctx, Signature *s,
 #ifdef UNITTESTS
 static void DetectHttpRawHeaderRegisterTests(void);
 #endif
-static _Bool DetectHttpRawHeaderValidateCallback(const Signature *s, const char **sigerror);
+static bool DetectHttpRawHeaderValidateCallback(const Signature *s, const char **sigerror);
 static int g_http_raw_header_buffer_id = 0;
 static InspectionBuffer *GetData(DetectEngineThreadCtx *det_ctx,
         const DetectEngineTransforms *transforms, Flow *_f,
@@ -78,6 +78,7 @@ void DetectHttpRawHeaderRegister(void)
     /* http_raw_header content modifier */
     sigmatch_table[DETECT_AL_HTTP_RAW_HEADER].name = "http_raw_header";
     sigmatch_table[DETECT_AL_HTTP_RAW_HEADER].desc = "content modifier to match the raw HTTP header buffer";
+    sigmatch_table[DETECT_AL_HTTP_RAW_HEADER].url = "/rules/http-keywords.html#http-header-and-http-raw-header";
     sigmatch_table[DETECT_AL_HTTP_RAW_HEADER].Setup = DetectHttpRawHeaderSetup;
 #ifdef UNITTESTS
     sigmatch_table[DETECT_AL_HTTP_RAW_HEADER].RegisterTests = DetectHttpRawHeaderRegisterTests;
@@ -88,22 +89,20 @@ void DetectHttpRawHeaderRegister(void)
     /* http.header.raw sticky buffer */
     sigmatch_table[DETECT_HTTP_RAW_HEADER].name = "http.header.raw";
     sigmatch_table[DETECT_HTTP_RAW_HEADER].desc = "sticky buffer to match the raw HTTP header buffer";
-    sigmatch_table[DETECT_HTTP_RAW_HEADER].url = DOC_URL DOC_VERSION "/rules/http-keywords.html#http-raw-header";
+    sigmatch_table[DETECT_HTTP_RAW_HEADER].url = "/rules/http-keywords.html#http-header-and-http-raw-header";
     sigmatch_table[DETECT_HTTP_RAW_HEADER].Setup = DetectHttpRawHeaderSetupSticky;
     sigmatch_table[DETECT_HTTP_RAW_HEADER].flags |= SIGMATCH_NOOPT|SIGMATCH_INFO_STICKY_BUFFER;
 
-    DetectAppLayerInspectEngineRegister2("http_raw_header", ALPROTO_HTTP,
-            SIG_FLAG_TOSERVER, HTP_REQUEST_HEADERS+1,
-            DetectEngineInspectBufferGeneric, GetData);
-    DetectAppLayerInspectEngineRegister2("http_raw_header", ALPROTO_HTTP,
-            SIG_FLAG_TOCLIENT, HTP_RESPONSE_HEADERS+1,
-            DetectEngineInspectBufferGeneric, GetData);
+    DetectAppLayerInspectEngineRegister2("http_raw_header", ALPROTO_HTTP1, SIG_FLAG_TOSERVER,
+            HTP_REQUEST_HEADERS + 1, DetectEngineInspectBufferGeneric, GetData);
+    DetectAppLayerInspectEngineRegister2("http_raw_header", ALPROTO_HTTP1, SIG_FLAG_TOCLIENT,
+            HTP_RESPONSE_HEADERS + 1, DetectEngineInspectBufferGeneric, GetData);
 
     DetectAppLayerMpmRegister2("http_raw_header", SIG_FLAG_TOSERVER, 2,
-            PrefilterMpmHttpHeaderRawRequestRegister, NULL, ALPROTO_HTTP,
+            PrefilterMpmHttpHeaderRawRequestRegister, NULL, ALPROTO_HTTP1,
             0); /* progress handled in register */
     DetectAppLayerMpmRegister2("http_raw_header", SIG_FLAG_TOCLIENT, 2,
-            PrefilterMpmHttpHeaderRawResponseRegister, NULL, ALPROTO_HTTP,
+            PrefilterMpmHttpHeaderRawResponseRegister, NULL, ALPROTO_HTTP1,
             0); /* progress handled in register */
 
     DetectBufferTypeSetDescriptionByName("http_raw_header",
@@ -130,10 +129,8 @@ void DetectHttpRawHeaderRegister(void)
  */
 int DetectHttpRawHeaderSetup(DetectEngineCtx *de_ctx, Signature *s, const char *arg)
 {
-    return DetectEngineContentModifierBufferSetup(de_ctx, s, arg,
-                                                  DETECT_AL_HTTP_RAW_HEADER,
-                                                  g_http_raw_header_buffer_id,
-                                                  ALPROTO_HTTP);
+    return DetectEngineContentModifierBufferSetup(
+            de_ctx, s, arg, DETECT_AL_HTTP_RAW_HEADER, g_http_raw_header_buffer_id, ALPROTO_HTTP1);
 }
 
 /**
@@ -149,12 +146,12 @@ static int DetectHttpRawHeaderSetupSticky(DetectEngineCtx *de_ctx, Signature *s,
 {
     if (DetectBufferSetActiveList(s, g_http_raw_header_buffer_id) < 0)
         return -1;
-    if (DetectSignatureSetAppProto(s, ALPROTO_HTTP) < 0)
+    if (DetectSignatureSetAppProto(s, ALPROTO_HTTP1) < 0)
         return -1;
     return 0;
 }
 
-static _Bool DetectHttpRawHeaderValidateCallback(const Signature *s, const char **sigerror)
+static bool DetectHttpRawHeaderValidateCallback(const Signature *s, const char **sigerror)
 {
     if ((s->flags & (SIG_FLAG_TOCLIENT|SIG_FLAG_TOSERVER)) == (SIG_FLAG_TOCLIENT|SIG_FLAG_TOSERVER)) {
         *sigerror = "http_raw_header signature "
@@ -163,9 +160,9 @@ static _Bool DetectHttpRawHeaderValidateCallback(const Signature *s, const char 
                 "inspecting response headers.";
 
         SCLogError(SC_ERR_INVALID_SIGNATURE, "%s", *sigerror);
-        SCReturnInt(FALSE);
+        SCReturnInt(false);
     }
-    return TRUE;
+    return true;
 }
 
 static InspectionBuffer *GetData(DetectEngineThreadCtx *det_ctx,
@@ -185,10 +182,10 @@ static InspectionBuffer *GetData(DetectEngineThreadCtx *det_ctx,
             tx_ud->request_headers_raw : tx_ud->response_headers_raw;
         if (data == NULL)
             return NULL;
-        const uint8_t data_len = ts ?
+        const uint32_t data_len = ts ?
             tx_ud->request_headers_raw_len : tx_ud->response_headers_raw_len;
 
-        InspectionBufferSetup(buffer, data, data_len);
+        InspectionBufferSetup(det_ctx, list_id, buffer, data, data_len);
         InspectionBufferApplyTransforms(buffer, transforms);
     }
 

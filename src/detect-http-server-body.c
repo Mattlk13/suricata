@@ -74,7 +74,7 @@ void DetectHttpServerBodyRegister(void)
     /* http_server_body content modifier */
     sigmatch_table[DETECT_AL_HTTP_SERVER_BODY].name = "http_server_body";
     sigmatch_table[DETECT_AL_HTTP_SERVER_BODY].desc = "content modifier to match on the HTTP response-body";
-    sigmatch_table[DETECT_AL_HTTP_SERVER_BODY].url = DOC_URL DOC_VERSION "/rules/http-keywords.html#http-server-body";
+    sigmatch_table[DETECT_AL_HTTP_SERVER_BODY].url = "/rules/http-keywords.html#http-server-body";
     sigmatch_table[DETECT_AL_HTTP_SERVER_BODY].Setup = DetectHttpServerBodySetup;
 #ifdef UNITTESTS
     sigmatch_table[DETECT_AL_HTTP_SERVER_BODY].RegisterTests = DetectHttpServerBodyRegisterTests;
@@ -86,7 +86,7 @@ void DetectHttpServerBodyRegister(void)
     /* http.request_body sticky buffer */
     sigmatch_table[DETECT_HTTP_RESPONSE_BODY].name = "http.response_body";
     sigmatch_table[DETECT_HTTP_RESPONSE_BODY].desc = "sticky buffer to match the HTTP response body buffer";
-    sigmatch_table[DETECT_HTTP_RESPONSE_BODY].url = DOC_URL DOC_VERSION "/rules/http-keywords.html#http-server-body";
+    sigmatch_table[DETECT_HTTP_RESPONSE_BODY].url = "/rules/http-keywords.html#http-server-body";
     sigmatch_table[DETECT_HTTP_RESPONSE_BODY].Setup = DetectHttpServerBodySetupSticky;
     sigmatch_table[DETECT_HTTP_RESPONSE_BODY].flags |= SIGMATCH_NOOPT;
     sigmatch_table[DETECT_HTTP_RESPONSE_BODY].flags |= SIGMATCH_INFO_STICKY_BUFFER;
@@ -109,10 +109,8 @@ void DetectHttpServerBodyRegister(void)
  */
 int DetectHttpServerBodySetup(DetectEngineCtx *de_ctx, Signature *s, const char *arg)
 {
-    return DetectEngineContentModifierBufferSetup(de_ctx, s, arg,
-                                                  DETECT_AL_HTTP_SERVER_BODY,
-                                                  g_file_data_buffer_id,
-                                                  ALPROTO_HTTP);
+    return DetectEngineContentModifierBufferSetup(
+            de_ctx, s, arg, DETECT_AL_HTTP_SERVER_BODY, g_file_data_buffer_id, ALPROTO_HTTP1);
 }
 
 /**
@@ -128,7 +126,7 @@ static int DetectHttpServerBodySetupSticky(DetectEngineCtx *de_ctx, Signature *s
 {
     if (DetectBufferSetActiveList(s, g_file_data_buffer_id) < 0)
         return -1;
-    if (DetectSignatureSetAppProto(s, ALPROTO_HTTP) < 0)
+    if (DetectSignatureSetAppProto(s, ALPROTO_HTTP1) < 0)
         return -1;
     return 0;
 }

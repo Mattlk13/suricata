@@ -213,11 +213,11 @@ typedef struct IPV6GenOptHdr_
 
 typedef struct IPV6ExtHdrs_
 {
-    _Bool rh_set;
+    bool rh_set;
     uint8_t rh_type;
 
-    _Bool fh_set;
-    _Bool fh_more_frags_set;
+    bool fh_set;
+    bool fh_more_frags_set;
     uint8_t fh_nh;
 
     uint8_t fh_prev_nh;
@@ -235,9 +235,9 @@ typedef struct IPV6ExtHdrs_
 
 } IPV6ExtHdrs;
 
-#define IPV6_EXTHDR_SET_FH(p)       (p)->ip6eh.fh_set = TRUE
+#define IPV6_EXTHDR_SET_FH(p)       (p)->ip6eh.fh_set = true
 #define IPV6_EXTHDR_ISSET_FH(p)     (p)->ip6eh.fh_set
-#define IPV6_EXTHDR_SET_RH(p)       (p)->ip6eh.rh_set = TRUE
+#define IPV6_EXTHDR_SET_RH(p)       (p)->ip6eh.rh_set = true
 #define IPV6_EXTHDR_ISSET_RH(p)     (p)->ip6eh.rh_set
 
 void DecodeIPV6RegisterTests(void);

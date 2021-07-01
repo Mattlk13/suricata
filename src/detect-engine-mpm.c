@@ -74,7 +74,7 @@ const char *builtin_mpms[] = {
 
     NULL };
 
-/* Registery for mpm keywords
+/* Registry for mpm keywords
  *
  * Keywords are registered at engine start up
  */
@@ -116,6 +116,7 @@ void DetectAppLayerMpmRegister2(const char *name,
     snprintf(am->pname, sizeof(am->pname), "%s", am->name);
     am->direction = direction;
     am->sm_list = sm_list;
+    am->sm_list_base = sm_list;
     am->priority = priority;
     am->type = DETECT_BUFFER_MPM_TYPE_APP;
 
@@ -155,6 +156,7 @@ void DetectAppLayerMpmRegisterByParentId(DetectEngineCtx *de_ctx,
             am->name = t->name;
             am->direction = t->direction;
             am->sm_list = id; // use new id
+            am->sm_list_base = t->sm_list;
             am->type = DETECT_BUFFER_MPM_TYPE_APP;
             am->PrefilterRegisterWithListId = t->PrefilterRegisterWithListId;
             am->app_v2.GetData = t->app_v2.GetData;
@@ -162,6 +164,7 @@ void DetectAppLayerMpmRegisterByParentId(DetectEngineCtx *de_ctx,
             am->app_v2.tx_min_progress = t->app_v2.tx_min_progress;
             am->priority = t->priority;
             am->sgh_mpm_context = t->sgh_mpm_context;
+            am->sgh_mpm_context = MpmFactoryRegisterMpmCtxProfile(de_ctx, am->name, am->sm_list);
             am->next = t->next;
             if (transforms) {
                 memcpy(&am->transforms, transforms, sizeof(*transforms));
@@ -173,7 +176,7 @@ void DetectAppLayerMpmRegisterByParentId(DetectEngineCtx *de_ctx,
                 for (int i = 0; i < transforms->cnt; i++) {
                     char ttstr[64];
                     (void)snprintf(ttstr,sizeof(ttstr), "%s,",
-                            sigmatch_table[transforms->transforms[i]].name);
+                            sigmatch_table[transforms->transforms[i].transform].name);
                     strlcat(xforms, ttstr, sizeof(xforms));
                 }
                 xforms[strlen(xforms)-1] = '\0';
@@ -226,7 +229,7 @@ void DetectMpmInitializeAppMpms(DetectEngineCtx *de_ctx)
         }
 
         /* default to whatever the global setting is */
-        int shared = (de_ctx->sgh_mpm_context == ENGINE_SGH_MPM_FACTORY_CONTEXT_SINGLE);
+        int shared = (de_ctx->sgh_mpm_ctx_cnf == ENGINE_SGH_MPM_FACTORY_CONTEXT_SINGLE);
 
         /* see if we use a unique or shared mpm ctx for this type */
         int confshared = 0;
@@ -245,7 +248,7 @@ void DetectMpmInitializeAppMpms(DetectEngineCtx *de_ctx)
             if (!(de_ctx->flags & DE_QUIET)) {
                 SCLogPerf("using shared mpm ctx' for %s", n->name);
             }
-            n->sgh_mpm_context = MpmFactoryRegisterMpmCtxProfile(de_ctx, n->name);
+            n->sgh_mpm_context = MpmFactoryRegisterMpmCtxProfile(de_ctx, n->name, n->sm_list);
         }
 
         list = list->next;
@@ -349,6 +352,7 @@ void DetectPktMpmRegisterByParentId(DetectEngineCtx *de_ctx,
             am->name = t->name;
             snprintf(am->pname, sizeof(am->pname), "%s#%d", am->name, id);
             am->sm_list = id; // use new id
+            am->sm_list_base = t->sm_list;
             am->type = DETECT_BUFFER_MPM_TYPE_PKT;
             am->PrefilterRegisterWithListId = t->PrefilterRegisterWithListId;
             am->pkt_v1.GetData = t->pkt_v1.GetData;
@@ -393,7 +397,7 @@ void DetectMpmInitializePktMpms(DetectEngineCtx *de_ctx)
         }
 
         /* default to whatever the global setting is */
-        int shared = (de_ctx->sgh_mpm_context == ENGINE_SGH_MPM_FACTORY_CONTEXT_SINGLE);
+        int shared = (de_ctx->sgh_mpm_ctx_cnf == ENGINE_SGH_MPM_FACTORY_CONTEXT_SINGLE);
 
         /* see if we use a unique or shared mpm ctx for this type */
         int confshared = 0;
@@ -412,7 +416,7 @@ void DetectMpmInitializePktMpms(DetectEngineCtx *de_ctx)
             if (!(de_ctx->flags & DE_QUIET)) {
                 SCLogPerf("using shared mpm ctx' for %s", n->name);
             }
-            n->sgh_mpm_context = MpmFactoryRegisterMpmCtxProfile(de_ctx, n->name);
+            n->sgh_mpm_context = MpmFactoryRegisterMpmCtxProfile(de_ctx, n->name, n->sm_list);
         }
 
         list = list->next;
@@ -451,7 +455,7 @@ int DetectMpmPreparePktMpms(DetectEngineCtx *de_ctx)
 static int32_t SetupBuiltinMpm(DetectEngineCtx *de_ctx, const char *name)
 {
     /* default to whatever the global setting is */
-    int shared = (de_ctx->sgh_mpm_context == ENGINE_SGH_MPM_FACTORY_CONTEXT_SINGLE);
+    int shared = (de_ctx->sgh_mpm_ctx_cnf == ENGINE_SGH_MPM_FACTORY_CONTEXT_SINGLE);
 
     /* see if we use a unique or shared mpm ctx for this type */
     int confshared = 0;
@@ -466,7 +470,7 @@ static int32_t SetupBuiltinMpm(DetectEngineCtx *de_ctx, const char *name)
         ctx = MPM_CTX_FACTORY_UNIQUE_CONTEXT;
         SCLogPerf("using unique mpm ctx' for %s", name);
     } else {
-        ctx = MpmFactoryRegisterMpmCtxProfile(de_ctx, name);
+        ctx = MpmFactoryRegisterMpmCtxProfile(de_ctx, name, DETECT_SM_LIST_PMATCH);
         SCLogPerf("using shared mpm ctx' for %s", name);
     }
     return ctx;
@@ -619,20 +623,17 @@ uint16_t PatternMatchDefaultMatcher(void)
 
     /* Get the mpm algo defined in config file by the user */
     if ((ConfGet("mpm-algo", &mpm_algo)) == 1) {
-        uint16_t u;
-
         if (mpm_algo != NULL) {
 #if __BYTE_ORDER == __BIG_ENDIAN
             if (strcmp(mpm_algo, "ac-ks") == 0) {
-                SCLogError(SC_ERR_INVALID_YAML_CONF_ENTRY, "ac-ks does "
-                        "not work on big endian systems at this time.");
-                exit(EXIT_FAILURE);
+                FatalError(SC_ERR_FATAL, "ac-ks does "
+                           "not work on big endian systems at this time.");
             }
 #endif
             if (strcmp("auto", mpm_algo) == 0) {
                 goto done;
             }
-            for (u = 0; u < MPM_TABLE_SIZE; u++) {
+            for (uint16_t u = 0; u < MPM_TABLE_SIZE; u++) {
                 if (mpm_table[u].name == NULL)
                     continue;
 
@@ -641,21 +642,20 @@ uint16_t PatternMatchDefaultMatcher(void)
                     goto done;
                 }
             }
-        }
 
-        SCLogError(SC_ERR_INVALID_YAML_CONF_ENTRY, "Invalid mpm algo supplied "
+#ifndef BUILD_HYPERSCAN
+            if ((strcmp(mpm_algo, "hs") == 0)) {
+                FatalError(SC_ERR_INVALID_VALUE, "Hyperscan (hs) support for mpm-algo is "
+                        "not compiled into Suricata.");
+            }
+#endif
+        }
+        FatalError(SC_ERR_INVALID_YAML_CONF_ENTRY, "Invalid mpm algo supplied "
                 "in the yaml conf file: \"%s\"", mpm_algo);
-        exit(EXIT_FAILURE);
     }
 
  done:
     return mpm_algo_val;
-}
-
-/** \brief cleans up the mpm instance after a match */
-void PacketPatternCleanup(DetectEngineThreadCtx *det_ctx)
-{
-    PmqReset(&det_ctx->pmq);
 }
 
 void PatternMatchDestroy(MpmCtx *mpm_ctx, uint16_t mpm_matcher)
@@ -690,7 +690,7 @@ void PatternMatchThreadPrepare(MpmThreadCtx *mpm_thread_ctx, uint16_t mpm_matche
  *  Longer patterns score better than short patters.
  *
  *  \param pat pattern
- *  \param patlen length of the patternn
+ *  \param patlen length of the pattern
  *
  *  \retval s pattern score
  */
@@ -734,6 +734,13 @@ static void PopulateMpmHelperAddPattern(MpmCtx *mpm_ctx,
             pat_depth -= cd->content_len;
             pat_depth += cd->fp_chop_offset + cd->fp_chop_len;
         }
+    }
+
+    /* We have to effectively "wild card" values that will be coming from
+     * byte_extract variables
+     */
+    if (cd->flags & (DETECT_CONTENT_DEPTH_VAR | DETECT_CONTENT_OFFSET_VAR)) {
+        pat_depth = pat_offset = 0;
     }
 
     if (cd->flags & DETECT_CONTENT_NOCASE) {
@@ -1111,7 +1118,7 @@ void MpmStoreReportStats(const DetectEngineCtx *de_ctx)
             htb = HashListTableGetListNext(htb))
     {
         const MpmStore *ms = (MpmStore *)HashListTableGetListData(htb);
-        if (ms == NULL) {
+        if (ms == NULL || ms->mpm_ctx == NULL) {
             continue;
         }
         if (ms->buffer < MPMB_MAX)
@@ -1752,7 +1759,7 @@ int DetectSetFastPatternAndItsId(DetectEngineCtx *de_ctx)
     if (struct_total_size + content_total_size == 0)
         return 0;
 
-    /* array hash buffer - i've run out of ideas to name it */
+    /* array hash buffer - I've run out of ideas to name it */
     uint8_t *ahb = SCMalloc(sizeof(uint8_t) * (struct_total_size + content_total_size));
     if (unlikely(ahb == NULL))
         return -1;
@@ -1823,7 +1830,7 @@ int DetectSetFastPatternAndItsId(DetectEngineCtx *de_ctx)
                 /* Need to store case-insensitive patterns as lower case
                  * because SCMemcmpLowercase() above assumes that all
                  * patterns are stored lower case so that it doesn't
-                 * need to relower its first argument.
+                 * need to re-lower its first argument.
                  */
                 memcpy_tolower(struct_offset->content, content, content_len);
             } else {

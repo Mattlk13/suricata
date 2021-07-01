@@ -32,8 +32,6 @@
 
 #include "app-layer-htp.h"
 
-#ifdef HAVE_NSS
-
 /**
  * \brief Read the bytes of a hash from an hexadecimal string
  *
@@ -202,6 +200,7 @@ static DetectFileHashData *DetectFileHashParse (const DetectEngineCtx *de_ctx,
     DetectFileHashData *filehash = NULL;
     FILE *fp = NULL;
     char *filename = NULL;
+    char *rule_filename = NULL;
 
     /* We have a correct hash algorithm option */
     filehash = SCMalloc(sizeof(DetectFileHashData));
@@ -235,12 +234,17 @@ static DetectFileHashData *DetectFileHashParse (const DetectEngineCtx *de_ctx,
         goto error;
     }
 
+    rule_filename = SCStrdup(de_ctx->rule_file);
+    if (rule_filename == NULL) {
+        goto error;
+    }
+
     char line[8192] = "";
     fp = fopen(filename, "r");
     if (fp == NULL) {
 #ifdef HAVE_LIBGEN_H
         if (de_ctx->rule_file != NULL) {
-            char *dir = dirname(de_ctx->rule_file);
+            char *dir = dirname(rule_filename);
             if (dir != NULL) {
                 char path[PATH_MAX];
                 snprintf(path, sizeof(path), "%s/%s", dir, str);
@@ -287,16 +291,20 @@ static DetectFileHashData *DetectFileHashParse (const DetectEngineCtx *de_ctx,
     }
     SCLogInfo("Hash hash table size %u bytes%s", ROHashMemorySize(filehash->hash), filehash->negated ? ", negated match" : "");
 
+    SCFree(rule_filename);
     SCFree(filename);
     return filehash;
 
 error:
     if (filehash != NULL)
-        DetectFileHashFree(filehash);
+        DetectFileHashFree((DetectEngineCtx *) de_ctx, filehash);
     if (fp != NULL)
         fclose(fp);
     if (filename != NULL)
         SCFree(filename);
+    if (rule_filename != NULL) {
+        SCFree(rule_filename);
+    }
     return NULL;
 }
 
@@ -349,7 +357,7 @@ int DetectFileHashSetup (DetectEngineCtx *de_ctx, Signature *s, const char *str,
 
 error:
     if (filehash != NULL)
-        DetectFileHashFree(filehash);
+        DetectFileHashFree(de_ctx, filehash);
     if (sm != NULL)
         SCFree(sm);
     return -1;
@@ -360,7 +368,7 @@ error:
  *
  * \param filehash pointer to DetectFileHashData
  */
-void DetectFileHashFree(void *ptr)
+void DetectFileHashFree(DetectEngineCtx *de_ctx, void *ptr)
 {
     if (ptr != NULL) {
         DetectFileHashData *filehash = (DetectFileHashData *)ptr;
@@ -369,5 +377,3 @@ void DetectFileHashFree(void *ptr)
         SCFree(filehash);
     }
 }
-
-#endif /* HAVE_NSS */

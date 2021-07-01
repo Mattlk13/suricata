@@ -72,7 +72,7 @@ void DetectTlsSniRegister(void)
     sigmatch_table[DETECT_AL_TLS_SNI].name = "tls.sni";
     sigmatch_table[DETECT_AL_TLS_SNI].alias = "tls_sni";
     sigmatch_table[DETECT_AL_TLS_SNI].desc = "content modifier to match specifically and only on the TLS SNI buffer";
-    sigmatch_table[DETECT_AL_TLS_SNI].url = DOC_URL DOC_VERSION "/rules/tls-keywords.html#tls-sni";
+    sigmatch_table[DETECT_AL_TLS_SNI].url = "/rules/tls-keywords.html#tls-sni";
     sigmatch_table[DETECT_AL_TLS_SNI].Setup = DetectTlsSniSetup;
 #ifdef UNITTESTS
     sigmatch_table[DETECT_AL_TLS_SNI].RegisterTests = DetectTlsSniRegisterTests;
@@ -129,7 +129,7 @@ static InspectionBuffer *GetData(DetectEngineThreadCtx *det_ctx,
         const uint32_t data_len = strlen(ssl_state->client_connp.sni);
         const uint8_t *data = (uint8_t *)ssl_state->client_connp.sni;
 
-        InspectionBufferSetup(buffer, data, data_len);
+        InspectionBufferSetup(det_ctx, list_id, buffer, data, data_len);
         InspectionBufferApplyTransforms(buffer, transforms);
     }
 

@@ -64,7 +64,7 @@ static InspectionBuffer *GetData(DetectEngineThreadCtx *det_ctx,
         void *txv, const int list_id);
 static void DetectTlsSerialSetupCallback(const DetectEngineCtx *de_ctx,
         Signature *s);
-static _Bool DetectTlsSerialValidateCallback(const Signature *s,
+static bool DetectTlsSerialValidateCallback(const Signature *s,
         const char **sigerror);
 static int g_tls_cert_serial_buffer_id = 0;
 
@@ -76,7 +76,7 @@ void DetectTlsSerialRegister(void)
     sigmatch_table[DETECT_AL_TLS_CERT_SERIAL].name = "tls.cert_serial";
     sigmatch_table[DETECT_AL_TLS_CERT_SERIAL].alias = "tls_cert_serial";
     sigmatch_table[DETECT_AL_TLS_CERT_SERIAL].desc = "content modifier to match the TLS cert serial buffer";
-    sigmatch_table[DETECT_AL_TLS_CERT_SERIAL].url = DOC_URL DOC_VERSION "/rules/tls-keywords.html#tls-cert-serial";
+    sigmatch_table[DETECT_AL_TLS_CERT_SERIAL].url = "/rules/tls-keywords.html#tls-cert-serial";
     sigmatch_table[DETECT_AL_TLS_CERT_SERIAL].Setup = DetectTlsSerialSetup;
 #ifdef UNITTESTS
     sigmatch_table[DETECT_AL_TLS_CERT_SERIAL].RegisterTests = DetectTlsSerialRegisterTests;
@@ -140,14 +140,14 @@ static InspectionBuffer *GetData(DetectEngineThreadCtx *det_ctx,
         const uint32_t data_len = strlen(ssl_state->server_connp.cert0_serial);
         const uint8_t *data = (uint8_t *)ssl_state->server_connp.cert0_serial;
 
-        InspectionBufferSetup(buffer, data, data_len);
+        InspectionBufferSetup(det_ctx, list_id, buffer, data, data_len);
         InspectionBufferApplyTransforms(buffer, transforms);
     }
 
     return buffer;
 }
 
-static _Bool DetectTlsSerialValidateCallback(const Signature *s,
+static bool DetectTlsSerialValidateCallback(const Signature *s,
                                              const char **sigerror)
 {
     const SigMatch *sm = s->init_data->smlists[g_tls_cert_serial_buffer_id];
@@ -167,22 +167,22 @@ static _Bool DetectTlsSerialValidateCallback(const Signature *s,
 
         /* no need to worry about this if the content is short enough */
         if (cd->content_len <= 2)
-            return TRUE;
+            return true;
 
         uint32_t u;
         for (u = 0; u < cd->content_len; u++)
             if (cd->content[u] == ':')
-                return TRUE;
+                return true;
 
         *sigerror = "No colon delimiters ':' detected in content after "
                     "tls.cert_serial. This rule will therefore never "
                     "match.";
         SCLogWarning(SC_WARN_POOR_RULE, "rule %u: %s", s->id, *sigerror);
 
-        return FALSE;
+        return false;
     }
 
-    return TRUE;
+    return true;
 }
 
 static void DetectTlsSerialSetupCallback(const DetectEngineCtx *de_ctx,
@@ -196,13 +196,13 @@ static void DetectTlsSerialSetupCallback(const DetectEngineCtx *de_ctx,
 
         DetectContentData *cd = (DetectContentData *)sm->ctx;
 
-        _Bool changed = FALSE;
+        bool changed = false;
         uint32_t u;
         for (u = 0; u < cd->content_len; u++)
         {
             if (islower(cd->content[u])) {
                 cd->content[u] = toupper(cd->content[u]);
-                changed = TRUE;
+                changed = true;
             }
         }
 

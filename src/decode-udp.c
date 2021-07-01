@@ -1,4 +1,4 @@
-/* Copyright (C) 2007-2010 Open Information Security Foundation
+/* Copyright (C) 2007-2020 Open Information Security Foundation
  *
  * You can copy, redistribute or modify this Program under the terms of
  * the GNU General Public License version 2 as published by the Free
@@ -32,6 +32,7 @@
 
 #include "suricata-common.h"
 #include "decode.h"
+#include "decode-geneve.h"
 #include "decode-udp.h"
 #include "decode-teredo.h"
 #include "decode-vxlan.h"
@@ -41,7 +42,7 @@
 #include "flow.h"
 #include "app-layer.h"
 
-static int DecodeUDPPacket(ThreadVars *t, Packet *p, uint8_t *pkt, uint16_t len)
+static int DecodeUDPPacket(ThreadVars *t, Packet *p, const uint8_t *pkt, uint16_t len)
 {
     if (unlikely(len < UDP_HEADER_LEN)) {
         ENGINE_SET_INVALID_EVENT(p, UDP_HLEN_TOO_SMALL);
@@ -63,7 +64,7 @@ static int DecodeUDPPacket(ThreadVars *t, Packet *p, uint8_t *pkt, uint16_t len)
     SET_UDP_SRC_PORT(p,&p->sp);
     SET_UDP_DST_PORT(p,&p->dp);
 
-    p->payload = pkt + UDP_HEADER_LEN;
+    p->payload = (uint8_t *)pkt + UDP_HEADER_LEN;
     p->payload_len = len - UDP_HEADER_LEN;
 
     p->proto = IPPROTO_UDP;
@@ -71,20 +72,31 @@ static int DecodeUDPPacket(ThreadVars *t, Packet *p, uint8_t *pkt, uint16_t len)
     return 0;
 }
 
-int DecodeUDP(ThreadVars *tv, DecodeThreadVars *dtv, Packet *p, uint8_t *pkt, uint16_t len, PacketQueue *pq)
+int DecodeUDP(ThreadVars *tv, DecodeThreadVars *dtv, Packet *p,
+        const uint8_t *pkt, uint16_t len)
 {
     StatsIncr(tv, dtv->counter_udp);
 
-    if (unlikely(DecodeUDPPacket(tv, p,pkt,len) < 0)) {
-        p->udph = NULL;
+    if (unlikely(DecodeUDPPacket(tv, p, pkt,len) < 0)) {
+        CLEAR_UDP_PACKET(p);
         return TM_ECODE_FAILED;
     }
 
     SCLogDebug("UDP sp: %" PRIu32 " -> dp: %" PRIu32 " - HLEN: %" PRIu32 " LEN: %" PRIu32 "",
         UDP_GET_SRC_PORT(p), UDP_GET_DST_PORT(p), UDP_HEADER_LEN, p->payload_len);
 
-    if (unlikely(DecodeTeredo(tv, dtv, p, p->payload, p->payload_len, pq) == TM_ECODE_OK)) {
+    if (DecodeTeredoEnabledForPort(p->sp, p->dp) &&
+            likely(DecodeTeredo(tv, dtv, p, p->payload, p->payload_len) == TM_ECODE_OK)) {
         /* Here we have a Teredo packet and don't need to handle app
+         * layer */
+        FlowSetupPacket(p);
+        return TM_ECODE_OK;
+    }
+
+    /* Handle Geneve if configured */
+    if (DecodeGeneveEnabledForPort(p->sp, p->dp) &&
+            unlikely(DecodeGeneve(tv, dtv, p, p->payload, p->payload_len) == TM_ECODE_OK)) {
+        /* Here we have a Geneve packet and don't need to handle app
          * layer */
         FlowSetupPacket(p);
         return TM_ECODE_OK;
@@ -92,7 +104,7 @@ int DecodeUDP(ThreadVars *tv, DecodeThreadVars *dtv, Packet *p, uint8_t *pkt, ui
 
     /* Handle VXLAN if configured */
     if (DecodeVXLANEnabledForPort(p->sp, p->dp) &&
-            unlikely(DecodeVXLAN(tv, dtv, p, p->payload, p->payload_len, pq) == TM_ECODE_OK)) {
+            unlikely(DecodeVXLAN(tv, dtv, p, p->payload, p->payload_len) == TM_ECODE_OK)) {
         /* Here we have a VXLAN packet and don't need to handle app
          * layer */
         FlowSetupPacket(p);

@@ -61,7 +61,9 @@
 #include "detect-http-response-line.h"
 
 static int DetectHttpResponseLineSetup(DetectEngineCtx *, Signature *, const char *);
+#ifdef UNITTESTS
 static void DetectHttpResponseLineRegisterTests(void);
+#endif
 static InspectionBuffer *GetData(DetectEngineThreadCtx *det_ctx,
         const DetectEngineTransforms *transforms,
         Flow *_f, const uint8_t _flow_flags,
@@ -76,20 +78,18 @@ void DetectHttpResponseLineRegister(void)
     sigmatch_table[DETECT_AL_HTTP_RESPONSE_LINE].name = "http.response_line";
     sigmatch_table[DETECT_AL_HTTP_RESPONSE_LINE].alias = "http_response_line";
     sigmatch_table[DETECT_AL_HTTP_RESPONSE_LINE].desc = "content modifier to match only on the HTTP response line";
-    sigmatch_table[DETECT_AL_HTTP_RESPONSE_LINE].url = DOC_URL DOC_VERSION "/rules/http-keywords.html#http-response-line";
+    sigmatch_table[DETECT_AL_HTTP_RESPONSE_LINE].url = "/rules/http-keywords.html#http-response-line";
     sigmatch_table[DETECT_AL_HTTP_RESPONSE_LINE].Setup = DetectHttpResponseLineSetup;
+#ifdef UNITTESTS
     sigmatch_table[DETECT_AL_HTTP_RESPONSE_LINE].RegisterTests = DetectHttpResponseLineRegisterTests;
-
+#endif
     sigmatch_table[DETECT_AL_HTTP_RESPONSE_LINE].flags |= SIGMATCH_NOOPT|SIGMATCH_INFO_STICKY_BUFFER;
 
-    DetectAppLayerInspectEngineRegister2("http_response_line",
-            ALPROTO_HTTP, SIG_FLAG_TOCLIENT, HTP_RESPONSE_LINE,
-            DetectEngineInspectBufferGeneric,
-            GetData);
+    DetectAppLayerInspectEngineRegister2("http_response_line", ALPROTO_HTTP1, SIG_FLAG_TOCLIENT,
+            HTP_RESPONSE_LINE, DetectEngineInspectBufferGeneric, GetData);
 
     DetectAppLayerMpmRegister2("http_response_line", SIG_FLAG_TOCLIENT, 2,
-            PrefilterGenericMpmRegister, GetData,
-            ALPROTO_HTTP, HTP_RESPONSE_LINE);
+            PrefilterGenericMpmRegister, GetData, ALPROTO_HTTP1, HTP_RESPONSE_LINE);
 
     DetectBufferTypeSetDescriptionByName("http_response_line",
             "http response line");
@@ -115,7 +115,7 @@ static int DetectHttpResponseLineSetup(DetectEngineCtx *de_ctx, Signature *s, co
     if (DetectBufferSetActiveList(s, g_http_response_line_id) < 0)
         return -1;
 
-    if (DetectSignatureSetAppProto(s, ALPROTO_HTTP) < 0)
+    if (DetectSignatureSetAppProto(s, ALPROTO_HTTP1) < 0)
         return -1;
 
     return 0;
@@ -135,7 +135,7 @@ static InspectionBuffer *GetData(DetectEngineThreadCtx *det_ctx,
         const uint32_t data_len = bstr_len(tx->response_line);
         const uint8_t *data = bstr_ptr(tx->response_line);
 
-        InspectionBufferSetup(buffer, data, data_len);
+        InspectionBufferSetup(det_ctx, list_id, buffer, data, data_len);
         InspectionBufferApplyTransforms(buffer, transforms);
     }
     return buffer;
@@ -212,9 +212,9 @@ static int DetectHttpResponseLineTest02(void)
     p->flow = &f;
     p->flowflags |= (FLOW_PKT_TOSERVER|FLOW_PKT_ESTABLISHED);
     p->flags |= PKT_HAS_FLOW | PKT_STREAM_EST;
-    f.alproto = ALPROTO_HTTP;
+    f.alproto = ALPROTO_HTTP1;
 
-    StreamTcpInitConfig(TRUE);
+    StreamTcpInitConfig(true);
 
     de_ctx = DetectEngineCtxInit();
     FAIL_IF_NULL(de_ctx);
@@ -229,13 +229,15 @@ static int DetectHttpResponseLineTest02(void)
     SigGroupBuild(de_ctx);
     DetectEngineThreadCtxInit(&th_v, (void *)de_ctx, (void *)&det_ctx);
 
-    int r = AppLayerParserParse(&th_v, alp_tctx, &f, ALPROTO_HTTP, STREAM_TOSERVER, http_buf, http_len);
+    int r = AppLayerParserParse(
+            &th_v, alp_tctx, &f, ALPROTO_HTTP1, STREAM_TOSERVER, http_buf, http_len);
     FAIL_IF(r != 0);
 
     http_state = f.alstate;
     FAIL_IF_NULL(http_state);
 
-    r = AppLayerParserParse(&th_v, alp_tctx, &f, ALPROTO_HTTP, STREAM_TOCLIENT, http_buf2, http_len2);
+    r = AppLayerParserParse(
+            &th_v, alp_tctx, &f, ALPROTO_HTTP1, STREAM_TOCLIENT, http_buf2, http_len2);
     FAIL_IF(r != 0);
 
     /* do detect */
@@ -250,23 +252,18 @@ static int DetectHttpResponseLineTest02(void)
     AppLayerParserThreadCtxFree(alp_tctx);
     DetectEngineCtxFree(de_ctx);
 
-    StreamTcpFreeConfig(TRUE);
+    StreamTcpFreeConfig(true);
     FLOW_DESTROY(&f);
     UTHFreePackets(&p, 1);
     PASS;
 }
 
-#endif /* UNITTESTS */
-
 void DetectHttpResponseLineRegisterTests(void)
 {
-#ifdef UNITTESTS
     UtRegisterTest("DetectHttpResponseLineTest01", DetectHttpResponseLineTest01);
     UtRegisterTest("DetectHttpResponseLineTest02", DetectHttpResponseLineTest02);
-#endif /* UNITTESTS */
-
-    return;
 }
+#endif /* UNITTESTS */
 /**
  * @}
  */

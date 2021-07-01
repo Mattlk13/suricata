@@ -33,7 +33,6 @@
 #define PCAP_DONT_INCLUDE_PCAP_BPF_H 1
 #define SC_PCAP_DONT_INCLUDE_PCAP_H 1
 #include "suricata-common.h"
-#include "config.h"
 #include "suricata.h"
 #include "decode.h"
 #include "packet-queue.h"
@@ -129,7 +128,6 @@ void TmModuleReceiveAFPRegister (void)
     tmm_modules[TMM_RECEIVEAFP].Func = NULL;
     tmm_modules[TMM_RECEIVEAFP].ThreadExitPrintStats = NULL;
     tmm_modules[TMM_RECEIVEAFP].ThreadDeinit = NULL;
-    tmm_modules[TMM_RECEIVEAFP].RegisterTests = NULL;
     tmm_modules[TMM_RECEIVEAFP].cap_flags = 0;
     tmm_modules[TMM_RECEIVEAFP].flags = TM_FLAG_RECEIVE_TM;
 }
@@ -144,7 +142,6 @@ void TmModuleDecodeAFPRegister (void)
     tmm_modules[TMM_DECODEAFP].Func = NULL;
     tmm_modules[TMM_DECODEAFP].ThreadExitPrintStats = NULL;
     tmm_modules[TMM_DECODEAFP].ThreadDeinit = NULL;
-    tmm_modules[TMM_DECODEAFP].RegisterTests = NULL;
     tmm_modules[TMM_DECODEAFP].cap_flags = 0;
     tmm_modules[TMM_DECODEAFP].flags = TM_FLAG_DECODE_TM;
 }
@@ -174,11 +171,11 @@ TmEcode NoAFPSupportExit(ThreadVars *tv, const void *initdata, void **data)
 
 #ifndef TP_STATUS_USER_BUSY
 /* for new use latest bit available in tp_status */
-#define TP_STATUS_USER_BUSY (1 << 31)
+#define TP_STATUS_USER_BUSY     BIT_U32(31)
 #endif
 
 #ifndef TP_STATUS_VLAN_VALID
-#define TP_STATUS_VLAN_VALID (1 << 4)
+#define TP_STATUS_VLAN_VALID    BIT_U32(4)
 #endif
 
 enum {
@@ -303,17 +300,16 @@ typedef struct AFPThreadVars_
 
 } AFPThreadVars;
 
-TmEcode ReceiveAFP(ThreadVars *, Packet *, void *, PacketQueue *, PacketQueue *);
-TmEcode ReceiveAFPThreadInit(ThreadVars *, const void *, void **);
-void ReceiveAFPThreadExitStats(ThreadVars *, void *);
-TmEcode ReceiveAFPThreadDeinit(ThreadVars *, void *);
-TmEcode ReceiveAFPLoop(ThreadVars *tv, void *data, void *slot);
+static TmEcode ReceiveAFPThreadInit(ThreadVars *, const void *, void **);
+static void ReceiveAFPThreadExitStats(ThreadVars *, void *);
+static TmEcode ReceiveAFPThreadDeinit(ThreadVars *, void *);
+static TmEcode ReceiveAFPLoop(ThreadVars *tv, void *data, void *slot);
 
-TmEcode DecodeAFPThreadInit(ThreadVars *, const void *, void **);
-TmEcode DecodeAFPThreadDeinit(ThreadVars *tv, void *data);
-TmEcode DecodeAFP(ThreadVars *, Packet *, void *, PacketQueue *, PacketQueue *);
+static TmEcode DecodeAFPThreadInit(ThreadVars *, const void *, void **);
+static TmEcode DecodeAFPThreadDeinit(ThreadVars *tv, void *data);
+static TmEcode DecodeAFP(ThreadVars *, Packet *, void *);
 
-TmEcode AFPSetBPFFilter(AFPThreadVars *ptv);
+static TmEcode AFPSetBPFFilter(AFPThreadVars *ptv);
 static int AFPGetIfnumByDev(int fd, const char *ifname, int verbose);
 static int AFPGetDevFlags(int fd, const char *ifname);
 static int AFPDerefSocket(AFPPeer* peer);
@@ -333,7 +329,6 @@ void TmModuleReceiveAFPRegister (void)
     tmm_modules[TMM_RECEIVEAFP].PktAcqBreakLoop = NULL;
     tmm_modules[TMM_RECEIVEAFP].ThreadExitPrintStats = ReceiveAFPThreadExitStats;
     tmm_modules[TMM_RECEIVEAFP].ThreadDeinit = ReceiveAFPThreadDeinit;
-    tmm_modules[TMM_RECEIVEAFP].RegisterTests = NULL;
     tmm_modules[TMM_RECEIVEAFP].cap_flags = SC_CAP_NET_RAW;
     tmm_modules[TMM_RECEIVEAFP].flags = TM_FLAG_RECEIVE_TM;
 
@@ -385,9 +380,6 @@ static void AFPPeerClean(AFPPeer *peer)
 {
     if (peer->flags & AFP_SOCK_PROTECT)
         SCMutexDestroy(&peer->sock_protect);
-    SC_ATOMIC_DESTROY(peer->socket);
-    SC_ATOMIC_DESTROY(peer->if_idx);
-    SC_ATOMIC_DESTROY(peer->state);
     SCFree(peer);
 }
 
@@ -511,7 +503,7 @@ static void AFPPeersListReachedInc(void)
     if (peerslist.turn == 0)
         return;
 
-    if (SC_ATOMIC_ADD(peerslist.reached, 1) == peerslist.turn) {
+    if ((SC_ATOMIC_ADD(peerslist.reached, 1) + 1) == peerslist.turn) {
         SCLogInfo("All AFP capture threads are running.");
         (void)SC_ATOMIC_SET(peerslist.reached, 0);
         /* Set turn to 0 to skip syncrhonization when ReceiveAFPLoop is
@@ -554,7 +546,6 @@ void TmModuleDecodeAFPRegister (void)
     tmm_modules[TMM_DECODEAFP].Func = DecodeAFP;
     tmm_modules[TMM_DECODEAFP].ThreadExitPrintStats = NULL;
     tmm_modules[TMM_DECODEAFP].ThreadDeinit = DecodeAFPThreadDeinit;
-    tmm_modules[TMM_DECODEAFP].RegisterTests = NULL;
     tmm_modules[TMM_DECODEAFP].cap_flags = 0;
     tmm_modules[TMM_DECODEAFP].flags = TM_FLAG_DECODE_TM;
 }
@@ -681,12 +672,10 @@ static int AFPRead(AFPThreadVars *ptv)
     if (ptv->checksum_mode == CHECKSUM_VALIDATION_DISABLE) {
         p->flags |= PKT_IGNORE_CHECKSUM;
     } else if (ptv->checksum_mode == CHECKSUM_VALIDATION_AUTO) {
-        if (ptv->livedev->ignore_checksum) {
-            p->flags |= PKT_IGNORE_CHECKSUM;
-        } else if (ChecksumAutoModeCheck(ptv->pkts,
+        if (ChecksumAutoModeCheck(ptv->pkts,
                                           SC_ATOMIC_GET(ptv->livedev->pkts),
                                           SC_ATOMIC_GET(ptv->livedev->invalid_checksums))) {
-            ptv->livedev->ignore_checksum = 1;
+            ptv->checksum_mode = CHECKSUM_VALIDATION_DISABLE;
             p->flags |= PKT_IGNORE_CHECKSUM;
         }
     } else {
@@ -711,7 +700,6 @@ static int AFPRead(AFPThreadVars *ptv)
     }
 
     if (TmThreadsSlotProcessPkt(ptv->tv, ptv->slot, p) != TM_ECODE_OK) {
-        TmqhOutputPacketpool(ptv->tv, p);
         SCReturnInt(AFP_SURI_FAILURE);
     }
     SCReturnInt(AFP_READ_OK);
@@ -999,12 +987,10 @@ static int AFPReadFromRing(AFPThreadVars *ptv)
         if (ptv->checksum_mode == CHECKSUM_VALIDATION_DISABLE) {
             p->flags |= PKT_IGNORE_CHECKSUM;
         } else if (ptv->checksum_mode == CHECKSUM_VALIDATION_AUTO) {
-            if (ptv->livedev->ignore_checksum) {
-                p->flags |= PKT_IGNORE_CHECKSUM;
-            } else if (ChecksumAutoModeCheck(ptv->pkts,
+            if (ChecksumAutoModeCheck(ptv->pkts,
                         SC_ATOMIC_GET(ptv->livedev->pkts),
                         SC_ATOMIC_GET(ptv->livedev->invalid_checksums))) {
-                ptv->livedev->ignore_checksum = 1;
+                ptv->checksum_mode = CHECKSUM_VALIDATION_DISABLE;
                 p->flags |= PKT_IGNORE_CHECKSUM;
             }
         } else {
@@ -1027,7 +1013,6 @@ static int AFPReadFromRing(AFPThreadVars *ptv)
             if (++ptv->frame_offset >= ptv->req.v2.tp_frame_nr) {
                 ptv->frame_offset = 0;
             }
-            TmqhOutputPacketpool(ptv->tv, p);
             SCReturnInt(AFP_SURI_FAILURE);
         }
 
@@ -1113,12 +1098,10 @@ static inline int AFPParsePacketV3(AFPThreadVars *ptv, struct tpacket_block_desc
     if (ptv->checksum_mode == CHECKSUM_VALIDATION_DISABLE) {
         p->flags |= PKT_IGNORE_CHECKSUM;
     } else if (ptv->checksum_mode == CHECKSUM_VALIDATION_AUTO) {
-        if (ptv->livedev->ignore_checksum) {
-            p->flags |= PKT_IGNORE_CHECKSUM;
-        } else if (ChecksumAutoModeCheck(ptv->pkts,
+        if (ChecksumAutoModeCheck(ptv->pkts,
                     SC_ATOMIC_GET(ptv->livedev->pkts),
                     SC_ATOMIC_GET(ptv->livedev->invalid_checksums))) {
-            ptv->livedev->ignore_checksum = 1;
+            ptv->checksum_mode = CHECKSUM_VALIDATION_DISABLE;
             p->flags |= PKT_IGNORE_CHECKSUM;
         }
     } else {
@@ -1128,7 +1111,6 @@ static inline int AFPParsePacketV3(AFPThreadVars *ptv, struct tpacket_block_desc
     }
 
     if (TmThreadsSlotProcessPkt(ptv->tv, ptv->slot, p) != TM_ECODE_OK) {
-        TmqhOutputPacketpool(ptv->tv, p);
         SCReturnInt(AFP_SURI_FAILURE);
     }
 
@@ -1235,7 +1217,7 @@ static int AFPDerefSocket(AFPPeer* peer)
     if (peer == NULL)
         return 1;
 
-    if (SC_ATOMIC_SUB(peer->sock_usage, 1) == 0) {
+    if (SC_ATOMIC_SUB(peer->sock_usage, 1) == 1) {
         if (SC_ATOMIC_GET(peer->state) == AFP_STATE_DOWN) {
             SCLogInfo("Cleaning socket connected to '%s'", peer->iface);
             close(SC_ATOMIC_GET(peer->socket));
@@ -1272,7 +1254,7 @@ static void AFPSwitchState(AFPThreadVars *ptv, int state)
 #endif
         if (ptv->socket != -1) {
             /* we need to wait for all packets to return data */
-            if (SC_ATOMIC_SUB(ptv->mpeer->sock_usage, 1) == 0) {
+            if (SC_ATOMIC_SUB(ptv->mpeer->sock_usage, 1) == 1) {
                 SCLogDebug("Cleaning socket connected to '%s'", ptv->iface);
                 munmap(ptv->ring_buf, ptv->ring_buflen);
                 close(ptv->socket);
@@ -1618,7 +1600,7 @@ TmEcode ReceiveAFPLoop(ThreadVars *tv, void *data, void *slot)
                 last_dump = current_time;
             }
             /* poll timed out, lets see handle our timeout path */
-            TmThreadsCaptureHandleTimeout(tv, ptv->slot, NULL);
+            TmThreadsCaptureHandleTimeout(tv, NULL);
 
         } else if ((r < 0) && (errno != EINTR)) {
             SCLogError(SC_ERR_AFP_READ, "Error reading data from iface '%s': (%d) %s",
@@ -1995,21 +1977,22 @@ mmap_err:
 /** \brief test if we can use FANOUT. Older kernels like those in
  *         CentOS6 have HAVE_PACKET_FANOUT defined but fail to work
  */
-int AFPIsFanoutSupported(void)
+int AFPIsFanoutSupported(int cluster_id)
 {
 #ifdef HAVE_PACKET_FANOUT
     int fd = socket(AF_PACKET, SOCK_RAW, htons(ETH_P_ALL));
     if (fd < 0)
         return 0;
 
-    uint16_t mode = PACKET_FANOUT_HASH | PACKET_FANOUT_FLAG_DEFRAG;
+    uint32_t mode = PACKET_FANOUT_HASH | PACKET_FANOUT_FLAG_DEFRAG;
     uint16_t id = 1;
     uint32_t option = (mode << 16) | (id & 0xffff);
     int r = setsockopt(fd, SOL_PACKET, PACKET_FANOUT,(void *)&option, sizeof(option));
     close(fd);
 
     if (r < 0) {
-        SCLogPerf("fanout not supported by kernel: %s", strerror(errno));
+        SCLogError(SC_ERR_INVALID_VALUE, "fanout not supported by kernel: "
+                "Kernel too old or cluster-id %d already in use.", cluster_id);
         return 0;
     }
     return 1;
@@ -2170,7 +2153,7 @@ static int AFPCreateSocket(AFPThreadVars *ptv, char *devname, int verbose)
 #ifdef HAVE_PACKET_FANOUT
     /* add binded socket to fanout group */
     if (ptv->threads > 1) {
-        uint16_t mode = ptv->cluster_type;
+        uint32_t mode = ptv->cluster_type;
         uint16_t id = ptv->cluster_id;
         uint32_t option = (mode << 16) | (id & 0xffff);
         r = setsockopt(ptv->socket, SOL_PACKET, PACKET_FANOUT,(void *)&option, sizeof(option));
@@ -2878,23 +2861,19 @@ TmEcode ReceiveAFPThreadDeinit(ThreadVars *tv, void *data)
 /**
  * \brief This function passes off to link type decoders.
  *
- * DecodeAFP reads packets from the PacketQueue and passes
+ * DecodeAFP decodes packets from AF_PACKET and passes
  * them off to the proper link type decoder.
  *
  * \param t pointer to ThreadVars
  * \param p pointer to the current packet
  * \param data pointer that gets cast into AFPThreadVars for ptv
- * \param pq pointer to the current PacketQueue
  */
-TmEcode DecodeAFP(ThreadVars *tv, Packet *p, void *data, PacketQueue *pq, PacketQueue *postpq)
+TmEcode DecodeAFP(ThreadVars *tv, Packet *p, void *data)
 {
     SCEnter();
     DecodeThreadVars *dtv = (DecodeThreadVars *)data;
 
-    /* XXX HACK: flow timeout can call us for injected pseudo packets
-     *           see bug: https://redmine.openinfosecfoundation.org/issues/1107 */
-    if (p->flags & PKT_PSEUDO_STREAM_END)
-        return TM_ECODE_OK;
+    BUG_ON(PKT_IS_PSEUDOPKT(p));
 
     /* update counters */
     DecodeUpdatePacketCounters(tv, dtv, p);
@@ -2905,27 +2884,7 @@ TmEcode DecodeAFP(ThreadVars *tv, Packet *p, void *data, PacketQueue *pq, Packet
     }
 
     /* call the decoder */
-    switch (p->datalink) {
-        case LINKTYPE_ETHERNET:
-            DecodeEthernet(tv, dtv, p,GET_PKT_DATA(p), GET_PKT_LEN(p), pq);
-            break;
-        case LINKTYPE_LINUX_SLL:
-            DecodeSll(tv, dtv, p, GET_PKT_DATA(p), GET_PKT_LEN(p), pq);
-            break;
-        case LINKTYPE_PPP:
-            DecodePPP(tv, dtv, p, GET_PKT_DATA(p), GET_PKT_LEN(p), pq);
-            break;
-        case LINKTYPE_RAW:
-        case LINKTYPE_GRE_OVER_IP:
-            DecodeRaw(tv, dtv, p, GET_PKT_DATA(p), GET_PKT_LEN(p), pq);
-            break;
-        case LINKTYPE_NULL:
-            DecodeNull(tv, dtv, p, GET_PKT_DATA(p), GET_PKT_LEN(p), pq);
-            break;
-        default:
-            SCLogError(SC_ERR_DATALINK_UNIMPLEMENTED, "Error: datalink type %" PRId32 " not yet supported in module DecodeAFP", p->datalink);
-            break;
-    }
+    DecodeLinkLayer(tv, dtv, p->datalink, p, GET_PKT_DATA(p), GET_PKT_LEN(p));
 
     PacketDecodeFinalize(tv, dtv, p);
 

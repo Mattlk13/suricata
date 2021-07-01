@@ -46,25 +46,28 @@
 static int DetectAckSetup(DetectEngineCtx *, Signature *, const char *);
 static int DetectAckMatch(DetectEngineThreadCtx *,
                           Packet *, const Signature *, const SigMatchCtx *);
+#ifdef UNITTESTS
 static void DetectAckRegisterTests(void);
-static void DetectAckFree(void *);
+#endif
+static void DetectAckFree(DetectEngineCtx *, void *);
 static int PrefilterSetupTcpAck(DetectEngineCtx *de_ctx, SigGroupHead *sgh);
-static _Bool PrefilterTcpAckIsPrefilterable(const Signature *s);
+static bool PrefilterTcpAckIsPrefilterable(const Signature *s);
 
 void DetectAckRegister(void)
 {
     sigmatch_table[DETECT_ACK].name = "tcp.ack";
     sigmatch_table[DETECT_ACK].alias = "ack";
     sigmatch_table[DETECT_ACK].desc = "check for a specific TCP acknowledgement number";
-    sigmatch_table[DETECT_ACK].url = DOC_URL DOC_VERSION "/rules/header-keywords.html#ack";
+    sigmatch_table[DETECT_ACK].url = "/rules/header-keywords.html#ack";
     sigmatch_table[DETECT_ACK].Match = DetectAckMatch;
     sigmatch_table[DETECT_ACK].Setup = DetectAckSetup;
     sigmatch_table[DETECT_ACK].Free = DetectAckFree;
 
     sigmatch_table[DETECT_ACK].SupportsPrefilter = PrefilterTcpAckIsPrefilterable;
     sigmatch_table[DETECT_ACK].SetupPrefilter = PrefilterSetupTcpAck;
-
+#ifdef UNITTESTS
     sigmatch_table[DETECT_ACK].RegisterTests = DetectAckRegisterTests;
+#endif
 }
 
 /**
@@ -119,7 +122,7 @@ static int DetectAckSetup(DetectEngineCtx *de_ctx, Signature *s, const char *opt
 
     sm->type = DETECT_ACK;
 
-    if (-1 == ByteExtractStringUint32(&data->ack, 10, 0, optstr)) {
+    if (StringParseUint32(&data->ack, 10, 0, optstr) < 0) {
         goto error;
     }
     sm->ctx = (SigMatchCtx*)data;
@@ -133,7 +136,7 @@ error:
     if (data)
         SCFree(data);
     if (sm)
-        SigMatchFree(sm);
+        SigMatchFree(de_ctx, sm);
     return -1;
 
 }
@@ -144,7 +147,7 @@ error:
  *
  * \param data pointer to ack configuration data
  */
-static void DetectAckFree(void *ptr)
+static void DetectAckFree(DetectEngineCtx *de_ctx, void *ptr)
 {
     DetectAckData *data = (DetectAckData *)ptr;
     SCFree(data);
@@ -157,7 +160,7 @@ PrefilterPacketAckMatch(DetectEngineThreadCtx *det_ctx, Packet *p, const void *p
 {
     const PrefilterPacketHeaderCtx *ctx = pectx;
 
-    if (PrefilterPacketHeaderExtraMatch(ctx, p) == FALSE)
+    if (!PrefilterPacketHeaderExtraMatch(ctx, p))
         return;
 
     if ((p->proto) == IPPROTO_TCP && !(PKT_IS_PSEUDOPKT(p)) &&
@@ -175,13 +178,13 @@ PrefilterPacketAckSet(PrefilterPacketHeaderValue *v, void *smctx)
     v->u32[0] = a->ack;
 }
 
-static _Bool
+static bool
 PrefilterPacketAckCompare(PrefilterPacketHeaderValue v, void *smctx)
 {
     const DetectAckData *a = smctx;
     if (v.u32[0] == a->ack)
-        return TRUE;
-    return FALSE;
+        return true;
+    return false;
 }
 
 static int PrefilterSetupTcpAck(DetectEngineCtx *de_ctx, SigGroupHead *sgh)
@@ -192,16 +195,16 @@ static int PrefilterSetupTcpAck(DetectEngineCtx *de_ctx, SigGroupHead *sgh)
         PrefilterPacketAckMatch);
 }
 
-static _Bool PrefilterTcpAckIsPrefilterable(const Signature *s)
+static bool PrefilterTcpAckIsPrefilterable(const Signature *s)
 {
     const SigMatch *sm;
     for (sm = s->init_data->smlists[DETECT_SM_LIST_MATCH] ; sm != NULL; sm = sm->next) {
         switch (sm->type) {
             case DETECT_ACK:
-                return TRUE;
+                return true;
         }
     }
-    return FALSE;
+    return false;
 }
 
 #ifdef UNITTESTS
@@ -323,15 +326,12 @@ end:
     return result;
 }
 
-#endif /* UNITTESTS */
-
 /**
  * \internal
  * \brief This function registers unit tests for DetectAck
  */
 static void DetectAckRegisterTests(void)
 {
-#ifdef UNITTESTS
     UtRegisterTest("DetectAckSigTest01", DetectAckSigTest01);
-#endif /* UNITTESTS */
 }
+#endif /* UNITTESTS */

@@ -1,4 +1,4 @@
-/* Copyright (C) 2007-2010 Open Information Security Foundation
+/* Copyright (C) 2007-2020 Open Information Security Foundation
  *
  * You can copy, redistribute or modify this Program under the terms of
  * the GNU General Public License version 2 as published by the Free
@@ -24,6 +24,8 @@
 
 #ifndef __APP_LAYER_FTP_H__
 #define __APP_LAYER_FTP_H__
+
+#include "rust.h"
 
 enum {
     FTP_STATE_IN_PROGRESS,
@@ -89,8 +91,7 @@ typedef enum {
 
 typedef struct FtpCommand_ {
     FtpRequestCommand command;
-    const char *command_name_upper;
-    const char *command_name_lower;
+    const char *command_name;
     const uint8_t command_length;
 } FtpCommand;
 extern const FtpCommand FtpCommands[FTP_COMMAND_MAX + 1];
@@ -134,11 +135,7 @@ typedef struct FTPTransaction_  {
     /** id of this tx, starting at 0 */
     uint64_t tx_id;
 
-    uint64_t detect_flags_ts;
-    uint64_t detect_flags_tc;
-
-    /** indicates loggers done logging */
-    uint32_t logged;
+    AppLayerTxData tx_data;
 
     /* for the request */
     uint32_t request_length;
@@ -163,7 +160,7 @@ typedef struct FTPTransaction_  {
 
 /** FTP State for app layer parser */
 typedef struct FtpState_ {
-    uint8_t *input;
+    const uint8_t *input;
     int32_t input_len;
     uint8_t direction;
     bool active;
@@ -174,7 +171,7 @@ typedef struct FtpState_ {
 
     /* --parser details-- */
     /** current line extracted by the parser from the call to FTPGetline() */
-    uint8_t *current_line;
+    const uint8_t *current_line;
     /** length of the line in current_line.  Doesn't include the delimiter */
     uint32_t current_line_len;
     uint8_t current_line_delimiter_len;
@@ -210,17 +207,18 @@ typedef struct FtpDataState_ {
     FtpRequestCommand command;
     uint8_t state;
     uint8_t direction;
+    AppLayerTxData tx_data;
 } FtpDataState;
 
 void RegisterFTPParsers(void);
 void FTPParserRegisterTests(void);
 void FTPAtExitPrintStats(void);
+void FTPParserCleanup(void);
 uint64_t FTPMemuseGlobalCounter(void);
 uint64_t FTPMemcapGlobalCounter(void);
 
-#ifdef HAVE_LIBJANSSON
-json_t *JsonFTPDataAddMetadata(const Flow *f);
-#endif
+uint16_t JsonGetNextLineFromBuffer(const char *buffer, const uint16_t len);
+void EveFTPDataAddMetadata(const Flow *f, JsonBuilder *jb);
 
 #endif /* __APP_LAYER_FTP_H__ */
 

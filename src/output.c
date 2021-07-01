@@ -41,20 +41,20 @@
 #include "output.h"
 
 #include "alert-fastlog.h"
-#include "alert-unified2-alert.h"
 #include "alert-debuglog.h"
 #include "alert-prelude.h"
 #include "alert-syslog.h"
+#include "output-json.h"
 #include "output-json-alert.h"
 #include "output-json-anomaly.h"
 #include "output-json-flow.h"
 #include "output-json-netflow.h"
 #include "log-cf-common.h"
-#include "log-droplog.h"
 #include "output-json-drop.h"
 #include "log-httplog.h"
 #include "output-json-http.h"
 #include "output-json-dns.h"
+#include "output-json-modbus.h"
 #include "log-tlslog.h"
 #include "log-tlsstore.h"
 #include "output-json-tls.h"
@@ -63,7 +63,6 @@
 #include "output-json-file.h"
 #include "output-json-smtp.h"
 #include "output-json-stats.h"
-#include "log-filestore.h"
 #include "log-tcp-data.h"
 #include "log-stats.h"
 #include "output-json.h"
@@ -71,28 +70,43 @@
 #include "output-json-ftp.h"
 #include "output-json-tftp.h"
 #include "output-json-smb.h"
-#include "output-json-ikev2.h"
+#include "output-json-ike.h"
 #include "output-json-krb5.h"
 #include "output-json-dhcp.h"
 #include "output-json-snmp.h"
+#include "output-json-sip.h"
+#include "output-json-rfb.h"
+#include "output-json-mqtt.h"
 #include "output-json-template.h"
 #include "output-json-template-rust.h"
+#include "output-json-rdp.h"
+#include "output-json-http2.h"
 #include "output-lua.h"
 #include "output-json-dnp3.h"
 #include "output-json-metadata.h"
+#include "output-json-dcerpc.h"
 #include "output-filestore.h"
 
 typedef struct RootLogger_ {
+    OutputLogFunc LogFunc;
     ThreadInitFunc ThreadInit;
     ThreadDeinitFunc ThreadDeinit;
     ThreadExitPrintStatsFunc ThreadExitPrintStats;
-    OutputLogFunc LogFunc;
+    OutputGetActiveCountFunc ActiveCntFunc;
 
     TAILQ_ENTRY(RootLogger_) entries;
 } RootLogger;
 
-static TAILQ_HEAD(, RootLogger_) RootLoggers =
-    TAILQ_HEAD_INITIALIZER(RootLoggers);
+/* List of registered root loggers. These are registered at start up and
+ * are independent of configuration. Later we will build a list of active
+ * loggers based on configuration. */
+static TAILQ_HEAD(, RootLogger_) registered_loggers =
+    TAILQ_HEAD_INITIALIZER(registered_loggers);
+
+/* List of active root loggers. This means that at least one logger is enabled
+ * for each root logger type in the config. */
+static TAILQ_HEAD(, RootLogger_) active_loggers =
+    TAILQ_HEAD_INITIALIZER(active_loggers);
 
 typedef struct LoggerThreadStoreNode_ {
     void *thread_data;
@@ -146,8 +160,8 @@ void OutputRegisterModule(const char *name, const char *conf_name,
     return;
 
 error:
-    SCLogError(SC_ERR_FATAL, "Fatal error encountered in OutputRegisterModule. Exiting...");
-    exit(EXIT_FAILURE);
+    FatalError(SC_ERR_FATAL,
+               "Fatal error encountered in OutputRegisterModule. Exiting...");
 }
 
 /**
@@ -187,8 +201,7 @@ void OutputRegisterPacketModule(LoggerId id, const char *name,
     SCLogDebug("Packet logger \"%s\" registered.", name);
     return;
 error:
-    SCLogError(SC_ERR_FATAL, "Fatal error encountered. Exiting...");
-    exit(EXIT_FAILURE);
+    FatalError(SC_ERR_FATAL, "Fatal error encountered. Exiting...");
 }
 
 /**
@@ -229,8 +242,7 @@ void OutputRegisterPacketSubModule(LoggerId id, const char *parent_name,
     SCLogDebug("Packet logger \"%s\" registered.", name);
     return;
 error:
-    SCLogError(SC_ERR_FATAL, "Fatal error encountered. Exiting...");
-    exit(EXIT_FAILURE);
+    FatalError(SC_ERR_FATAL, "Fatal error encountered. Exiting...");
 }
 
 /**
@@ -274,8 +286,7 @@ static void OutputRegisterTxModuleWrapper(LoggerId id, const char *name,
     SCLogDebug("Tx logger \"%s\" registered.", name);
     return;
 error:
-    SCLogError(SC_ERR_FATAL, "Fatal error encountered. Exiting...");
-    exit(EXIT_FAILURE);
+    FatalError(SC_ERR_FATAL, "Fatal error encountered. Exiting...");
 }
 
 static void OutputRegisterTxSubModuleWrapper(LoggerId id, const char *parent_name,
@@ -312,8 +323,7 @@ static void OutputRegisterTxSubModuleWrapper(LoggerId id, const char *parent_nam
     SCLogDebug("Tx logger for alproto %d \"%s\" registered.", alproto, name);
     return;
 error:
-    SCLogError(SC_ERR_FATAL, "Fatal error encountered. Exiting...");
-    exit(EXIT_FAILURE);
+    FatalError(SC_ERR_FATAL, "Fatal error encountered. Exiting...");
 }
 
 /**
@@ -443,8 +453,7 @@ void OutputRegisterFileModule(LoggerId id, const char *name,
     SCLogDebug("File logger \"%s\" registered.", name);
     return;
 error:
-    SCLogError(SC_ERR_FATAL, "Fatal error encountered. Exiting...");
-    exit(EXIT_FAILURE);
+    FatalError(SC_ERR_FATAL, "Fatal error encountered. Exiting...");
 }
 
 /**
@@ -484,8 +493,7 @@ void OutputRegisterFileSubModule(LoggerId id, const char *parent_name,
     SCLogDebug("File logger \"%s\" registered.", name);
     return;
 error:
-    SCLogError(SC_ERR_FATAL, "Fatal error encountered. Exiting...");
-    exit(EXIT_FAILURE);
+    FatalError(SC_ERR_FATAL, "Fatal error encountered. Exiting...");
 }
 
 /**
@@ -524,8 +532,7 @@ void OutputRegisterFiledataModule(LoggerId id, const char *name,
     SCLogDebug("Filedata logger \"%s\" registered.", name);
     return;
 error:
-    SCLogError(SC_ERR_FATAL, "Fatal error encountered. Exiting...");
-    exit(EXIT_FAILURE);
+    FatalError(SC_ERR_FATAL, "Fatal error encountered. Exiting...");
 }
 
 /**
@@ -565,47 +572,7 @@ void OutputRegisterFiledataSubModule(LoggerId id, const char *parent_name,
     SCLogDebug("Filedata logger \"%s\" registered.", name);
     return;
 error:
-    SCLogError(SC_ERR_FATAL, "Fatal error encountered. Exiting...");
-    exit(EXIT_FAILURE);
-}
-
-/**
- * \brief Register a flow output module.
- *
- * This function will register an output module so it can be
- * configured with the configuration file.
- *
- * \retval Returns 0 on success, -1 on failure.
- */
-void OutputRegisterFlowModule(LoggerId id, const char *name,
-    const char *conf_name, OutputInitFunc InitFunc, FlowLogger FlowLogFunc,
-    ThreadInitFunc ThreadInit, ThreadDeinitFunc ThreadDeinit,
-    ThreadExitPrintStatsFunc ThreadExitPrintStats)
-{
-    if (unlikely(FlowLogFunc == NULL)) {
-        goto error;
-    }
-
-    OutputModule *module = SCCalloc(1, sizeof(*module));
-    if (unlikely(module == NULL)) {
-        goto error;
-    }
-
-    module->logger_id = id;
-    module->name = name;
-    module->conf_name = conf_name;
-    module->InitFunc = InitFunc;
-    module->FlowLogFunc = FlowLogFunc;
-    module->ThreadInit = ThreadInit;
-    module->ThreadDeinit = ThreadDeinit;
-    module->ThreadExitPrintStats = ThreadExitPrintStats;
-    TAILQ_INSERT_TAIL(&output_modules, module, entries);
-
-    SCLogDebug("Flow logger \"%s\" registered.", name);
-    return;
-error:
-    SCLogError(SC_ERR_FATAL, "Fatal error encountered. Exiting...");
-    exit(EXIT_FAILURE);
+    FatalError(SC_ERR_FATAL, "Fatal error encountered. Exiting...");
 }
 
 /**
@@ -645,8 +612,7 @@ void OutputRegisterFlowSubModule(LoggerId id, const char *parent_name,
     SCLogDebug("Flow logger \"%s\" registered.", name);
     return;
 error:
-    SCLogError(SC_ERR_FATAL, "Fatal error encountered. Exiting...");
-    exit(EXIT_FAILURE);
+    FatalError(SC_ERR_FATAL, "Fatal error encountered. Exiting...");
 }
 
 /**
@@ -687,8 +653,7 @@ void OutputRegisterStreamingModule(LoggerId id, const char *name,
     SCLogDebug("Streaming logger \"%s\" registered.", name);
     return;
 error:
-    SCLogError(SC_ERR_FATAL, "Fatal error encountered. Exiting...");
-    exit(EXIT_FAILURE);
+    FatalError(SC_ERR_FATAL, "Fatal error encountered. Exiting...");
 }
 
 /**
@@ -729,8 +694,7 @@ void OutputRegisterStreamingSubModule(LoggerId id, const char *parent_name,
     SCLogDebug("Streaming logger \"%s\" registered.", name);
     return;
 error:
-    SCLogError(SC_ERR_FATAL, "Fatal error encountered. Exiting...");
-    exit(EXIT_FAILURE);
+    FatalError(SC_ERR_FATAL, "Fatal error encountered. Exiting...");
 }
 
 /**
@@ -768,8 +732,7 @@ void OutputRegisterStatsModule(LoggerId id, const char *name,
     SCLogDebug("Stats logger \"%s\" registered.", name);
     return;
 error:
-    SCLogError(SC_ERR_FATAL, "Fatal error encountered. Exiting...");
-    exit(EXIT_FAILURE);
+    FatalError(SC_ERR_FATAL, "Fatal error encountered. Exiting...");
 }
 
 /**
@@ -809,8 +772,7 @@ void OutputRegisterStatsSubModule(LoggerId id, const char *parent_name,
     SCLogDebug("Stats logger \"%s\" registered.", name);
     return;
 error:
-    SCLogError(SC_ERR_FATAL, "Fatal error encountered. Exiting...");
-    exit(EXIT_FAILURE);
+    FatalError(SC_ERR_FATAL, "Fatal error encountered. Exiting...");
 }
 
 /**
@@ -915,12 +877,11 @@ void OutputNotifyFileRotation(void) {
 TmEcode OutputLoggerLog(ThreadVars *tv, Packet *p, void *thread_data)
 {
     LoggerThreadStore *thread_store = (LoggerThreadStore *)thread_data;
-    RootLogger *logger = TAILQ_FIRST(&RootLoggers);
+    RootLogger *logger = TAILQ_FIRST(&active_loggers);
     LoggerThreadStoreNode *thread_store_node = TAILQ_FIRST(thread_store);
     while (logger && thread_store_node) {
-        if (logger->LogFunc != NULL) {
-            logger->LogFunc(tv, p, thread_store_node->thread_data);
-        }
+        logger->LogFunc(tv, p, thread_store_node->thread_data);
+
         logger = TAILQ_NEXT(logger, entries);
         thread_store_node = TAILQ_NEXT(thread_store_node, entries);
     }
@@ -938,7 +899,7 @@ TmEcode OutputLoggerThreadInit(ThreadVars *tv, const void *initdata, void **data
     *data = (void *)thread_store;
 
     RootLogger *logger;
-    TAILQ_FOREACH(logger, &RootLoggers, entries) {
+    TAILQ_FOREACH(logger, &active_loggers, entries) {
 
         void *child_thread_data = NULL;
         if (logger->ThreadInit != NULL) {
@@ -965,7 +926,7 @@ TmEcode OutputLoggerThreadDeinit(ThreadVars *tv, void *thread_data)
         return TM_ECODE_FAILED;
 
     LoggerThreadStore *thread_store = (LoggerThreadStore *)thread_data;
-    RootLogger *logger = TAILQ_FIRST(&RootLoggers);
+    RootLogger *logger = TAILQ_FIRST(&active_loggers);
     LoggerThreadStoreNode *thread_store_node = TAILQ_FIRST(thread_store);
     while (logger && thread_store_node) {
         if (logger->ThreadDeinit != NULL) {
@@ -988,7 +949,7 @@ TmEcode OutputLoggerThreadDeinit(ThreadVars *tv, void *thread_data)
 void OutputLoggerExitPrintStats(ThreadVars *tv, void *thread_data)
 {
     LoggerThreadStore *thread_store = (LoggerThreadStore *)thread_data;
-    RootLogger *logger = TAILQ_FIRST(&RootLoggers);
+    RootLogger *logger = TAILQ_FIRST(&active_loggers);
     LoggerThreadStoreNode *thread_store_node = TAILQ_FIRST(thread_store);
     while (logger && thread_store_node) {
         if (logger->ThreadExitPrintStats != NULL) {
@@ -1002,17 +963,56 @@ void OutputLoggerExitPrintStats(ThreadVars *tv, void *thread_data)
 void OutputRegisterRootLogger(ThreadInitFunc ThreadInit,
     ThreadDeinitFunc ThreadDeinit,
     ThreadExitPrintStatsFunc ThreadExitPrintStats,
-    OutputLogFunc LogFunc)
+    OutputLogFunc LogFunc, OutputGetActiveCountFunc ActiveCntFunc)
 {
+    BUG_ON(LogFunc == NULL);
+
     RootLogger *logger = SCCalloc(1, sizeof(*logger));
     if (logger == NULL) {
-        return;
+        FatalError(SC_ERR_MEM_ALLOC, "failed to alloc root logger");
     }
     logger->ThreadInit = ThreadInit;
     logger->ThreadDeinit = ThreadDeinit;
     logger->ThreadExitPrintStats = ThreadExitPrintStats;
     logger->LogFunc = LogFunc;
-    TAILQ_INSERT_TAIL(&RootLoggers, logger, entries);
+    logger->ActiveCntFunc = ActiveCntFunc;
+    TAILQ_INSERT_TAIL(&registered_loggers, logger, entries);
+}
+
+static void OutputRegisterActiveLogger(RootLogger *reg)
+{
+    RootLogger *logger = SCCalloc(1, sizeof(*logger));
+    if (logger == NULL) {
+        FatalError(SC_ERR_MEM_ALLOC, "failed to alloc root logger");
+    }
+    logger->ThreadInit = reg->ThreadInit;
+    logger->ThreadDeinit = reg->ThreadDeinit;
+    logger->ThreadExitPrintStats = reg->ThreadExitPrintStats;
+    logger->LogFunc = reg->LogFunc;
+    logger->ActiveCntFunc = reg->ActiveCntFunc;
+    TAILQ_INSERT_TAIL(&active_loggers, logger, entries);
+}
+
+void OutputSetupActiveLoggers(void)
+{
+    RootLogger *logger = TAILQ_FIRST(&registered_loggers);
+    while (logger) {
+        uint32_t cnt = logger->ActiveCntFunc();
+        if (cnt) {
+            OutputRegisterActiveLogger(logger);
+        }
+
+        logger = TAILQ_NEXT(logger, entries);
+    }
+}
+
+void OutputClearActiveLoggers(void)
+{
+    RootLogger *logger;
+    while ((logger = TAILQ_FIRST(&active_loggers)) != NULL) {
+        TAILQ_REMOVE(&active_loggers, logger, entries);
+        SCFree(logger);
+    }
 }
 
 void TmModuleLoggerRegister(void)
@@ -1050,10 +1050,6 @@ void OutputRegisterLoggers(void)
     AlertPreludeRegister();
     /* syslog log */
     AlertSyslogRegister();
-    /* unified2 log */
-    Unified2AlertRegister();
-    /* drop log */
-    LogDropLogRegister();
     JsonDropLogRegister();
     /* json log */
     OutputJsonRegister();
@@ -1062,6 +1058,7 @@ void OutputRegisterLoggers(void)
     /* http log */
     LogHttpLogRegister();
     JsonHttpLogRegister();
+    JsonHttp2LogRegister();
     /* tls log */
     LogTlsLogRegister();
     JsonTlsLogRegister();
@@ -1072,10 +1069,11 @@ void OutputRegisterLoggers(void)
     PcapLogRegister();
     /* file log */
     JsonFileLogRegister();
-    LogFilestoreRegister();
     OutputFilestoreRegister();
     /* dns */
     JsonDnsLogRegister();
+    /* modbus */
+    JsonModbusLogRegister();
     /* tcp streaming data */
     LogTcpDataLogRegister();
     /* log stats */
@@ -1101,16 +1099,26 @@ void OutputRegisterLoggers(void)
     JsonFTPLogRegister();
     /* SMB JSON logger. */
     JsonSMBLogRegister();
-    /* IKEv2 JSON logger. */
-    JsonIKEv2LogRegister();
+    /* IKE JSON logger. */
+    JsonIKELogRegister();
     /* KRB5 JSON logger. */
     JsonKRB5LogRegister();
     /* DHCP JSON logger. */
     JsonDHCPLogRegister();
     /* SNMP JSON logger. */
     JsonSNMPLogRegister();
+    /* SIP JSON logger. */
+    JsonSIPLogRegister();
+    /* RFB JSON logger. */
+    JsonRFBLogRegister();
+    /* MQTT JSON logger. */
+    JsonMQTTLogRegister();
     /* Template JSON logger. */
     JsonTemplateLogRegister();
     /* Template Rust JSON logger. */
     JsonTemplateRustLogRegister();
+    /* RDP JSON logger. */
+    JsonRdpLogRegister();
+    /* DCERPC JSON logger. */
+    JsonDCERPCLogRegister();
 }

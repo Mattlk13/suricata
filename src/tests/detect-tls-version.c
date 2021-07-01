@@ -29,10 +29,10 @@
 static int DetectTlsVersionTestParse01 (void)
 {
     DetectTlsVersionData *tls = NULL;
-    tls = DetectTlsVersionParse("1.0");
+    tls = DetectTlsVersionParse(NULL, "1.0");
     FAIL_IF_NULL(tls);
     FAIL_IF_NOT(tls->ver == TLS_VERSION_10);
-    DetectTlsVersionFree(tls);
+    DetectTlsVersionFree(NULL, tls);
     PASS;
 }
 
@@ -44,9 +44,9 @@ static int DetectTlsVersionTestParse01 (void)
 static int DetectTlsVersionTestParse02 (void)
 {
     DetectTlsVersionData *tls = NULL;
-    tls = DetectTlsVersionParse("2.5");
+    tls = DetectTlsVersionParse(NULL, "2.5");
     FAIL_IF_NOT_NULL(tls);
-    DetectTlsVersionFree(tls);
+    DetectTlsVersionFree(NULL, tls);
     PASS;
 }
 
@@ -86,7 +86,7 @@ static int DetectTlsVersionTestDetect01(void)
     p->flags |= PKT_HAS_FLOW|PKT_STREAM_EST;
     f.alproto = ALPROTO_TLS;
 
-    StreamTcpInitConfig(TRUE);
+    StreamTcpInitConfig(true);
 
     DetectEngineCtx *de_ctx = DetectEngineCtxInit();
     FAIL_IF_NULL(de_ctx);
@@ -139,7 +139,7 @@ static int DetectTlsVersionTestDetect01(void)
     DetectEngineThreadCtxDeinit(&th_v, (void *)det_ctx);
     DetectEngineCtxFree(de_ctx);
 
-    StreamTcpFreeConfig(TRUE);
+    StreamTcpFreeConfig(true);
     FLOW_DESTROY(&f);
 
     UTHFreePackets(&p, 1);
@@ -180,7 +180,7 @@ static int DetectTlsVersionTestDetect02(void)
     p->flags |= PKT_HAS_FLOW|PKT_STREAM_EST;
     f.alproto = ALPROTO_TLS;
 
-    StreamTcpInitConfig(TRUE);
+    StreamTcpInitConfig(true);
 
     DetectEngineCtx *de_ctx = DetectEngineCtxInit();
     FAIL_IF_NULL(de_ctx);
@@ -228,7 +228,7 @@ static int DetectTlsVersionTestDetect02(void)
     DetectEngineThreadCtxDeinit(&th_v, (void *)det_ctx);
     DetectEngineCtxFree(de_ctx);
 
-    StreamTcpFreeConfig(TRUE);
+    StreamTcpFreeConfig(true);
     FLOW_DESTROY(&f);
 
     UTHFreePackets(&p, 1);

@@ -40,6 +40,7 @@ enum RunModes {
     RUNMODE_NAPATECH,
     RUNMODE_UNIX_SOCKET,
     RUNMODE_WINDIVERT,
+    RUNMODE_PLUGIN,
     RUNMODE_USER_MAX, /* Last standard running mode */
     RUNMODE_LIST_KEYWORDS,
     RUNMODE_LIST_APP_LAYERS,
@@ -56,6 +57,7 @@ enum RunModes {
     RUNMODE_REMOVE_SERVICE,
     RUNMODE_CHANGE_SERVICE_PARAMS,
 #endif
+    RUNMODE_DUMP_FEATURES,
     RUNMODE_MAX,
 };
 
@@ -76,7 +78,7 @@ char *RunmodeGetActive(void);
 const char *RunModeGetMainMode(void);
 
 void RunModeListRunmodes(void);
-void RunModeDispatch(int, const char *);
+void RunModeDispatch(int, const char *, const char *capture_plugin_name, const char *capture_plugin_args);
 void RunModeRegisterRunModes(void);
 void RunModeRegisterNewRunMode(enum RunModes, const char *, const char *,
                                int (*RunModeFunc)(void));
@@ -109,7 +111,7 @@ int RunModeNeedsBypassManager(void);
 #include "runmode-netmap.h"
 #include "runmode-windivert.h"
 
-int threading_set_cpu_affinity;
+extern int threading_set_cpu_affinity;
 extern float threading_detect_ratio;
 
 extern int debuglog_enabled;

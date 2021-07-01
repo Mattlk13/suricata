@@ -1,4 +1,4 @@
-/* Copyright (C) 2011-2016 Open Information Security Foundation
+/* Copyright (C) 2011-2021 Open Information Security Foundation
  *
  * You can copy, redistribute or modify this Program under the terms of
  * the GNU General Public License version 2 as published by the Free
@@ -25,7 +25,7 @@
 
 #define MAX_DEVNAME 10
 
-static int g_bypass_storage_id = -1;
+static LiveDevStorageId g_bypass_storage_id = { .id = -1 };
 
 /**
  * \file
@@ -141,7 +141,6 @@ int LiveRegisterDevice(const char *dev)
     SC_ATOMIC_INIT(pd->pkts);
     SC_ATOMIC_INIT(pd->drop);
     SC_ATOMIC_INIT(pd->invalid_checksums);
-    pd->ignore_checksum = 0;
     pd->id = LiveGetDeviceCount();
     TAILQ_INSERT_TAIL(&live_devices, pd, next);
 
@@ -189,6 +188,49 @@ const char *LiveGetDeviceName(int number)
 
     return NULL;
 }
+
+/**
+ *  \brief Get the number of pre registered devices
+ *
+ *  \retval cnt the number of pre registered devices
+ */
+int LiveGetDeviceNameCount(void)
+{
+    int i = 0;
+    LiveDeviceName *pd;
+
+    TAILQ_FOREACH(pd, &pre_live_devices, next) {
+        i++;
+    }
+
+    return i;
+}
+
+/**
+ *  \brief Get a pointer to the pre device name at idx
+ *
+ *  \param number idx of the pre device in our list
+ *
+ *  \retval ptr pointer to the string containing the device
+ *  \retval NULL on error
+ */
+const char *LiveGetDeviceNameName(int number)
+{
+    int i = 0;
+    LiveDeviceName *pd;
+
+    TAILQ_FOREACH(pd, &pre_live_devices, next) {
+        if (i == number) {
+            return pd->dev;
+        }
+
+        i++;
+    }
+
+    return NULL;
+}
+
+
 
 /** \internal
  *  \brief Shorten a device name that is to long
@@ -321,9 +363,6 @@ int LiveDeviceListClean()
 
         if (pd->dev)
             SCFree(pd->dev);
-        SC_ATOMIC_DESTROY(pd->pkts);
-        SC_ATOMIC_DESTROY(pd->drop);
-        SC_ATOMIC_DESTROY(pd->invalid_checksums);
         LiveDevFreeStorage(pd);
         SCFree(pd);
     }
@@ -551,7 +590,7 @@ void LiveDevAddBypassFail(LiveDevice *dev, uint64_t cnt, int family)
 }
 
 /**
- * Increase number of currently succesfully bypassed flows for a protocol family
+ * Increase number of currently successfully bypassed flows for a protocol family
  *
  * \param dev pointer to LiveDevice to set stats for
  * \param cnt number of flows to add

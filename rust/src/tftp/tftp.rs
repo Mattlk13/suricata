@@ -1,4 +1,4 @@
-/* Copyright (C) 2017-2019 Open Information Security Foundation
+/* Copyright (C) 2017-2020 Open Information Security Foundation
  *
  * You can copy, redistribute or modify this Program under the terms of
  * the GNU General Public License version 2 as published by the Free
@@ -22,16 +22,23 @@ extern crate nom;
 use std::str;
 use std;
 use std::mem::transmute;
+use nom::*;
 
-use applayer::LoggerFlags;
+use crate::applayer::AppLayerTxData;
 
-#[derive(Debug)]
+const READREQUEST:  u8 = 1;
+const WRITEREQUEST: u8 = 2;
+const DATA:         u8 = 3;
+const ACK:          u8 = 4;
+const ERROR:        u8 = 5;
+
+#[derive(Debug, PartialEq)]
 pub struct TFTPTransaction {
     pub opcode : u8,
     pub filename : String,
     pub mode : String,
-    pub logged : LoggerFlags,
     id: u64,
+    tx_data: AppLayerTxData,
 }
 
 pub struct TFTPState {
@@ -60,13 +67,19 @@ impl TFTPTransaction {
             opcode : opcode,
             filename : filename,
             mode : mode.to_lowercase(),
-            logged : LoggerFlags::new(),
             id : 0,
+            tx_data: AppLayerTxData::new(),
         }
     }
     pub fn is_mode_ok(&self) -> bool {
         match self.mode.as_str() {
             "netascii" | "mail" | "octet" => true,
+            _ => false
+        }
+    }
+    pub fn is_opcode_ok(&self) -> bool {
+        match self.opcode {
+            READREQUEST | WRITEREQUEST | ACK | DATA | ERROR => true,
             _ => false
         }
     }
@@ -100,20 +113,6 @@ pub extern "C" fn rs_tftp_get_tx(state: &mut TFTPState,
 }
 
 #[no_mangle]
-pub extern "C" fn rs_tftp_get_tx_logged(_state: &mut TFTPState,
-                                        tx: &mut TFTPTransaction)
-                                        -> u32 {
-    return tx.logged.get();
-}
-
-#[no_mangle]
-pub extern "C" fn rs_tftp_set_tx_logged(_state: &mut TFTPState,
-                                        tx: &mut TFTPTransaction,
-                                        logged: u32) {
-    tx.logged.set(logged);
-}
-
-#[no_mangle]
 pub extern "C" fn rs_tftp_get_tx_cnt(state: &mut TFTPState) -> u64 {
     return state.tx_id as u64;
 }
@@ -124,32 +123,148 @@ named!(getstr<&str>, map_res!(
     )
 );
 
-named!(pub tftp_request<TFTPTransaction>,
-       do_parse!(
+fn tftp_request<'a>(slice: &'a [u8]) -> IResult<&[u8], TFTPTransaction> {
+       do_parse!(slice,
            tag!([0]) >>
            opcode: take!(1) >>
            filename: getstr >>
            tag!([0]) >>
-           mode : getstr >>
+           mode: getstr >>
            (
                TFTPTransaction::new(opcode[0], String::from(filename), String::from(mode))
-           )
-    )
-);
+            )
+       )
+}
 
+fn parse_tftp_request(input: &[u8]) -> Option<TFTPTransaction> {
+    match tftp_request(input) {
+        Ok((_, tx)) => {
+            if !tx.is_mode_ok() {
+                return None;
+            }
+            if !tx.is_opcode_ok() {
+                return None;
+            }
+            return Some(tx);
+        }
+        Err(_) => {
+            return None;
+        }
+    }
+}
 
 #[no_mangle]
 pub extern "C" fn rs_tftp_request(state: &mut TFTPState,
                                   input: *const u8,
                                   len: u32) -> i64 {
     let buf = unsafe{std::slice::from_raw_parts(input, len as usize)};
-    return match tftp_request(buf) {
-        Ok((_, mut rqst)) => {
+    match parse_tftp_request(buf) {
+        Some(mut tx) => {
             state.tx_id += 1;
-            rqst.id = state.tx_id;
-            state.transactions.push(rqst);
-            1
+            tx.id = state.tx_id;
+            state.transactions.push(tx);
+            0
         },
-        _ => 0
+        None => {
+           -1
+        }
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn rs_tftp_get_tx_data(
+    tx: *mut std::os::raw::c_void)
+    -> *mut AppLayerTxData
+{
+    let tx = cast_pointer!(tx, TFTPTransaction);
+    return &mut tx.tx_data;
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+    static READ_REQUEST: [u8; 20] = [
+            0x00, 0x01, 0x72, 0x66, 0x63, 0x31, 0x33, 0x35, 0x30, 0x2e, 0x74, 0x78, 0x74, 0x00, 0x6f, 0x63, 0x74, 0x65, 0x74, 0x00,
+    ];
+    /* filename not terminated */
+    static READ_REQUEST_INVALID_1: [u8; 20] = [
+            0x00, 0x01, 0x72, 0x66, 0x63, 0x31, 0x33, 0x35, 0x30, 0x2e, 0x74, 0x78, 0x74, 0x6e, 0x6f, 0x63, 0x74, 0x65, 0x74, 0x00,
+    ];
+    /* garbage */
+    static READ_REQUEST_INVALID_2: [u8; 3] = [
+            0xff, 0xff, 0xff,
+    ];
+    static WRITE_REQUEST: [u8; 20] = [
+            0x00, 0x02, 0x72, 0x66, 0x63, 0x31, 0x33, 0x35, 0x30, 0x2e, 0x74, 0x78, 0x74, 0x00, 0x6f, 0x63, 0x74, 0x65, 0x74, 0x00,
+    ];
+    /* filename not terminated */
+    static INVALID_OPCODE: [u8; 20] = [
+            0x00, 0x06, 0x72, 0x66, 0x63, 0x31, 0x33, 0x35, 0x30, 0x2e, 0x74, 0x78, 0x74, 0x6e, 0x6f, 0x63, 0x74, 0x65, 0x74, 0x00,
+    ];
+    static INVALID_MODE: [u8; 20] = [
+            0x00, 0x01, 0x72, 0x66, 0x63, 0x31, 0x33, 0x35, 0x30, 0x2e, 0x74, 0x78, 0x74, 0x00, 0x63, 0x63, 0x63, 0x63, 0x63, 0x00,
+    ];
+
+    #[test]
+    pub fn test_parse_tftp_read_request_1() {
+        let tx = TFTPTransaction {
+            opcode: READREQUEST,
+            filename: String::from("rfc1350.txt"),
+            mode: String::from("octet"),
+            id: 0,
+            tx_data: AppLayerTxData::new(),
+        };
+
+        match parse_tftp_request(&READ_REQUEST[..]) {
+            Some(txp) => {
+                assert_eq!(tx, txp);
+            }
+            None => {
+                assert!(true);
+            }
+        }
+    }
+
+    #[test]
+    pub fn test_parse_tftp_write_request_1() {
+        let tx = TFTPTransaction {
+            opcode: WRITEREQUEST,
+            filename: String::from("rfc1350.txt"),
+            mode: String::from("octet"),
+            id: 0,
+            tx_data: AppLayerTxData::new(),
+        };
+
+        match parse_tftp_request(&WRITE_REQUEST[..]) {
+            Some(txp) => {
+                assert_eq!(tx, txp);
+            }
+            None => {
+                assert!(true, "fadfasd");
+            }
+        }
+    }
+
+    // Invalid request: filename not terminated
+    #[test]
+    pub fn test_parse_tftp_read_request_2() {
+        assert_eq!(None, parse_tftp_request(&READ_REQUEST_INVALID_1[..]));
+    }
+
+    // Invalid request: garbage input
+    #[test]
+    pub fn test_parse_tftp_read_request_3() {
+        assert_eq!(None, parse_tftp_request(&READ_REQUEST_INVALID_2[..]));
+    }
+
+    #[test]
+    pub fn test_parse_tftp_invalid_opcode_1() {
+        assert_eq!(None, parse_tftp_request(&INVALID_OPCODE[..]));
+    }
+
+    #[test]
+    pub fn test_parse_tftp_invalid_mode() {
+
+        assert_eq!(None, parse_tftp_request(&INVALID_MODE[..]));
     }
 }

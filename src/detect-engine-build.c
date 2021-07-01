@@ -1,4 +1,4 @@
-/* Copyright (C) 2007-2018 Open Information Security Foundation
+/* Copyright (C) 2007-2020 Open Information Security Foundation
  *
  * You can copy, redistribute or modify this Program under the terms of
  * the GNU General Public License version 2 as published by the Free
@@ -28,6 +28,7 @@
 #include "detect-engine-port.h"
 #include "detect-engine-prefilter.h"
 #include "detect-engine-proto.h"
+#include "detect-engine-threshold.h"
 
 #include "detect-dsize.h"
 #include "detect-tcp-flags.h"
@@ -43,7 +44,7 @@ void SigCleanSignatures(DetectEngineCtx *de_ctx)
 
     for (Signature *s = de_ctx->sig_list; s != NULL;) {
         Signature *ns = s->next;
-        SigFree(s);
+        SigFree(de_ctx, s);
         s = ns;
     }
     de_ctx->sig_list = NULL;
@@ -617,7 +618,6 @@ static int RuleMpmIsNegated(const Signature *s)
     return (cd->flags & DETECT_CONTENT_NEGATED);
 }
 
-#ifdef HAVE_LIBJANSSON
 static json_t *RulesGroupPrintSghStats(const SigGroupHead *sgh,
                                 const int add_rules, const int add_mpm_stats)
 {
@@ -632,18 +632,20 @@ static json_t *RulesGroupPrintSghStats(const SigGroupHead *sgh,
     uint32_t mpms_min = 0;
     uint32_t mpms_max = 0;
 
+    int max_buffer_type_id = DetectBufferTypeMaxId() + 1;
+
     struct {
         uint32_t total;
         uint32_t cnt;
         uint32_t min;
         uint32_t max;
-    } mpm_stats[DETECT_SM_LIST_MAX];
+    } mpm_stats[max_buffer_type_id];
     memset(mpm_stats, 0x00, sizeof(mpm_stats));
 
     uint32_t alstats[ALPROTO_MAX] = {0};
-    uint32_t mpm_sizes[DETECT_SM_LIST_MAX][256];
+    uint32_t mpm_sizes[max_buffer_type_id][256];
     memset(mpm_sizes, 0, sizeof(mpm_sizes));
-    uint32_t alproto_mpm_bufs[ALPROTO_MAX][DETECT_SM_LIST_MAX];
+    uint32_t alproto_mpm_bufs[ALPROTO_MAX][max_buffer_type_id];
     memset(alproto_mpm_bufs, 0, sizeof(alproto_mpm_bufs));
 
     json_t *js = json_object();
@@ -803,10 +805,11 @@ static json_t *RulesGroupPrintSghStats(const SigGroupHead *sgh,
             json_t *app = json_object();
             json_object_set_new(app, "total", json_integer(alstats[i]));
 
-            for (x = 0; x < DETECT_SM_LIST_MAX; x++) {
-                if (alproto_mpm_bufs[i][x] == 0)
+            for (int y = 0; y < max_buffer_type_id; y++) {
+                if (alproto_mpm_bufs[i][y] == 0)
                     continue;
-                json_object_set_new(app, DetectListToHumanString(x), json_integer(alproto_mpm_bufs[i][x]));
+                json_object_set_new(
+                        app, DetectListToHumanString(y), json_integer(alproto_mpm_bufs[i][y]));
             }
 
             json_object_set_new(stats, AppProtoToString(i), app);
@@ -816,17 +819,17 @@ static json_t *RulesGroupPrintSghStats(const SigGroupHead *sgh,
     if (add_mpm_stats) {
         json_t *mpm_js = json_object();
 
-        for (i = 0; i < DETECT_SM_LIST_MAX; i++) {
+        for (i = 0; i < max_buffer_type_id; i++) {
             if (mpm_stats[i].cnt > 0) {
 
                 json_t *mpm_sizes_array = json_array();
-                for (x = 0; x < 256; x++) {
-                    if (mpm_sizes[i][x] == 0)
+                for (int y = 0; y < 256; y++) {
+                    if (mpm_sizes[i][y] == 0)
                         continue;
 
                     json_t *e = json_object();
-                    json_object_set_new(e, "size", json_integer(x));
-                    json_object_set_new(e, "count", json_integer(mpm_sizes[i][x]));
+                    json_object_set_new(e, "size", json_integer(y));
+                    json_object_set_new(e, "count", json_integer(mpm_sizes[i][y]));
                     json_array_append_new(mpm_sizes_array, e);
                 }
 
@@ -846,16 +849,15 @@ static json_t *RulesGroupPrintSghStats(const SigGroupHead *sgh,
     }
     json_object_set_new(js, "stats", stats);
 
-    json_object_set_new(js, "whitelist", json_integer(sgh->init->whitelist));
+    if (sgh->init)
+        json_object_set_new(js, "whitelist", json_integer(sgh->init->whitelist));
 
     return js;
 }
-#endif /* HAVE_LIBJANSSON */
 
 static void RulesDumpGrouping(const DetectEngineCtx *de_ctx,
                        const int add_rules, const int add_mpm_stats)
 {
-#ifdef HAVE_LIBJANSSON
     json_t *js = json_object();
     if (unlikely(js == NULL))
         return;
@@ -930,7 +932,6 @@ static void RulesDumpGrouping(const DetectEngineCtx *de_ctx,
     fprintf(fp, "%s\n", js_s);
     free(js_s);
     fclose(fp);
-#endif
     return;
 }
 
@@ -1378,7 +1379,7 @@ int SigAddressPrepareStage1(DetectEngineCtx *de_ctx)
                 SigMatch *sm = s->init_data->smlists[i];
                 while (sm != NULL) {
                     if (sigmatch_table[sm->type].SupportsPrefilter != NULL) {
-                        if (sigmatch_table[sm->type].SupportsPrefilter(s) == TRUE) {
+                        if (sigmatch_table[sm->type].SupportsPrefilter(s)) {
                             prefilter_list = MIN(prefilter_list, sm->type);
                         }
                     }
@@ -1422,7 +1423,9 @@ int SigAddressPrepareStage1(DetectEngineCtx *de_ctx)
         SCLogConfig("building signature grouping structure, stage 1: "
                "preprocessing rules... complete");
     }
-    DetectFlowbitsAnalyze(de_ctx);
+
+    if (DetectFlowbitsAnalyze(de_ctx) != 0)
+        goto error;
 
     return 0;
 
@@ -1805,7 +1808,7 @@ int SigAddressPrepareStage4(DetectEngineCtx *de_ctx)
         int add_rules = 0;
         (void)ConfGetBool("detect.profiling.grouping.include-rules", &add_rules);
         int add_mpm_stats = 0;
-        (void)ConfGetBool("detect.profiling.grouping.include-mpm-stats", &add_rules);
+        (void)ConfGetBool("detect.profiling.grouping.include-mpm-stats", &add_mpm_stats);
 
         RulesDumpGrouping(de_ctx, add_rules, add_mpm_stats);
     }
@@ -1846,9 +1849,7 @@ static int SigMatchPrepare(DetectEngineCtx *de_ctx)
         DetectEnginePktInspectionSetup(s);
 
         if (rule_engine_analysis_set) {
-#ifdef HAVE_LIBJANSSON
             EngineAnalysisRules2(de_ctx, s);
-#endif
         }
         /* free lists. Ctx' are xferred to sm_arrays so won't get freed */
         uint32_t i;
@@ -1856,12 +1857,18 @@ static int SigMatchPrepare(DetectEngineCtx *de_ctx)
             SigMatch *sm = s->init_data->smlists[i];
             while (sm != NULL) {
                 SigMatch *nsm = sm->next;
-                SigMatchFree(sm);
+                SigMatchFree(de_ctx, sm);
                 sm = nsm;
             }
         }
         SCFree(s->init_data->smlists);
         SCFree(s->init_data->smlists_tail);
+        for (i = 0; i < (uint32_t)s->init_data->transforms.cnt; i++) {
+            if (s->init_data->transforms.transforms[i].options) {
+                SCFree(s->init_data->transforms.transforms[i].options);
+                s->init_data->transforms.transforms[i].options = NULL;
+            }
+        }
         SCFree(s->init_data);
         s->init_data = NULL;
     }
@@ -1901,35 +1908,29 @@ int SigGroupBuild(DetectEngineCtx *de_ctx)
     SigInitStandardMpmFactoryContexts(de_ctx);
 
     if (SigAddressPrepareStage1(de_ctx) != 0) {
-        SCLogError(SC_ERR_DETECT_PREPARE, "initializing the detection engine failed");
-        exit(EXIT_FAILURE);
+        FatalError(SC_ERR_FATAL, "initializing the detection engine failed");
     }
 
     if (SigAddressPrepareStage2(de_ctx) != 0) {
-        SCLogError(SC_ERR_DETECT_PREPARE, "initializing the detection engine failed");
-        exit(EXIT_FAILURE);
+        FatalError(SC_ERR_FATAL, "initializing the detection engine failed");
     }
 
     if (SigAddressPrepareStage3(de_ctx) != 0) {
-        SCLogError(SC_ERR_DETECT_PREPARE, "initializing the detection engine failed");
-        exit(EXIT_FAILURE);
+        FatalError(SC_ERR_FATAL, "initializing the detection engine failed");
     }
     if (SigAddressPrepareStage4(de_ctx) != 0) {
-        SCLogError(SC_ERR_DETECT_PREPARE, "initializing the detection engine failed");
-        exit(EXIT_FAILURE);
+        FatalError(SC_ERR_FATAL, "initializing the detection engine failed");
     }
 
     int r = DetectMpmPrepareBuiltinMpms(de_ctx);
     r |= DetectMpmPrepareAppMpms(de_ctx);
     r |= DetectMpmPreparePktMpms(de_ctx);
     if (r != 0) {
-        SCLogError(SC_ERR_DETECT_PREPARE, "initializing the detection engine failed");
-        exit(EXIT_FAILURE);
+        FatalError(SC_ERR_FATAL, "initializing the detection engine failed");
     }
 
     if (SigMatchPrepare(de_ctx) != 0) {
-        SCLogError(SC_ERR_DETECT_PREPARE, "initializing the detection engine failed");
-        exit(EXIT_FAILURE);
+        FatalError(SC_ERR_FATAL, "initializing the detection engine failed");
     }
 
 #ifdef PROFILING
@@ -1943,6 +1944,8 @@ int SigGroupBuild(DetectEngineCtx *de_ctx)
 
     SCProfilingRuleInitCounters(de_ctx);
 #endif
+
+    ThresholdHashAllocate(de_ctx);
 
     if (!DetectEngineMultiTenantEnabled()) {
         VarNameStoreActivateStaging();

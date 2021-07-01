@@ -58,8 +58,10 @@ static int DetectFilenameMatch (DetectEngineThreadCtx *, Flow *,
         uint8_t, File *, const Signature *, const SigMatchCtx *);
 static int DetectFilenameSetup (DetectEngineCtx *, Signature *, const char *);
 static int DetectFilenameSetupSticky(DetectEngineCtx *de_ctx, Signature *s, const char *str);
+#ifdef UNITTESTS
 static void DetectFilenameRegisterTests(void);
-static void DetectFilenameFree(void *);
+#endif
+static void DetectFilenameFree(DetectEngineCtx *, void *);
 static int g_file_match_list_id = 0;
 static int g_file_name_buffer_id = 0;
 
@@ -79,58 +81,57 @@ void DetectFilenameRegister(void)
 {
     sigmatch_table[DETECT_FILENAME].name = "filename";
     sigmatch_table[DETECT_FILENAME].desc = "match on the file name";
-    sigmatch_table[DETECT_FILENAME].url = DOC_URL DOC_VERSION "/rules/file-keywords.html#filename";
+    sigmatch_table[DETECT_FILENAME].url = "/rules/file-keywords.html#filename";
     sigmatch_table[DETECT_FILENAME].FileMatch = DetectFilenameMatch;
     sigmatch_table[DETECT_FILENAME].Setup = DetectFilenameSetup;
     sigmatch_table[DETECT_FILENAME].Free  = DetectFilenameFree;
+#ifdef UNITTESTS
     sigmatch_table[DETECT_FILENAME].RegisterTests = DetectFilenameRegisterTests;
+#endif
     sigmatch_table[DETECT_FILENAME].flags = SIGMATCH_QUOTES_OPTIONAL|SIGMATCH_HANDLE_NEGATION;
     sigmatch_table[DETECT_FILENAME].alternative = DETECT_FILE_NAME;
 
     sigmatch_table[DETECT_FILE_NAME].name = "file.name";
     sigmatch_table[DETECT_FILE_NAME].desc = "sticky buffer to match on the file name";
-    sigmatch_table[DETECT_FILE_NAME].url = DOC_URL DOC_VERSION "/rules/file-keywords.html#filename";
+    sigmatch_table[DETECT_FILE_NAME].url = "/rules/file-keywords.html#filename";
     sigmatch_table[DETECT_FILE_NAME].Setup = DetectFilenameSetupSticky;
     sigmatch_table[DETECT_FILE_NAME].flags = SIGMATCH_NOOPT|SIGMATCH_INFO_STICKY_BUFFER;
 
-    DetectAppLayerInspectEngineRegister("files",
-            ALPROTO_HTTP, SIG_FLAG_TOSERVER, HTP_REQUEST_BODY,
-            DetectFileInspectGeneric);
-    DetectAppLayerInspectEngineRegister("files",
-            ALPROTO_HTTP, SIG_FLAG_TOCLIENT, HTP_RESPONSE_BODY,
-            DetectFileInspectGeneric);
+    DetectAppLayerInspectEngineRegister2("files", ALPROTO_HTTP1, SIG_FLAG_TOSERVER,
+            HTP_REQUEST_BODY, DetectFileInspectGeneric, NULL);
+    DetectAppLayerInspectEngineRegister2("files", ALPROTO_HTTP1, SIG_FLAG_TOCLIENT,
+            HTP_RESPONSE_BODY, DetectFileInspectGeneric, NULL);
 
-    DetectAppLayerInspectEngineRegister("files",
-            ALPROTO_SMTP, SIG_FLAG_TOSERVER, 0,
-            DetectFileInspectGeneric);
+    DetectAppLayerInspectEngineRegister2(
+            "files", ALPROTO_SMTP, SIG_FLAG_TOSERVER, 0, DetectFileInspectGeneric, NULL);
 
-    DetectAppLayerInspectEngineRegister("files",
-            ALPROTO_NFS, SIG_FLAG_TOSERVER, 0,
-            DetectFileInspectGeneric);
-    DetectAppLayerInspectEngineRegister("files",
-            ALPROTO_NFS, SIG_FLAG_TOCLIENT, 0,
-            DetectFileInspectGeneric);
+    DetectAppLayerInspectEngineRegister2(
+            "files", ALPROTO_NFS, SIG_FLAG_TOSERVER, 0, DetectFileInspectGeneric, NULL);
+    DetectAppLayerInspectEngineRegister2(
+            "files", ALPROTO_NFS, SIG_FLAG_TOCLIENT, 0, DetectFileInspectGeneric, NULL);
 
-    DetectAppLayerInspectEngineRegister("files",
-            ALPROTO_FTPDATA, SIG_FLAG_TOSERVER, 0,
-            DetectFileInspectGeneric);
-    DetectAppLayerInspectEngineRegister("files",
-            ALPROTO_FTPDATA, SIG_FLAG_TOCLIENT, 0,
-            DetectFileInspectGeneric);
+    DetectAppLayerInspectEngineRegister2(
+            "files", ALPROTO_FTPDATA, SIG_FLAG_TOSERVER, 0, DetectFileInspectGeneric, NULL);
+    DetectAppLayerInspectEngineRegister2(
+            "files", ALPROTO_FTPDATA, SIG_FLAG_TOCLIENT, 0, DetectFileInspectGeneric, NULL);
 
-    DetectAppLayerInspectEngineRegister("files",
-            ALPROTO_SMB, SIG_FLAG_TOSERVER, 0,
-            DetectFileInspectGeneric);
-    DetectAppLayerInspectEngineRegister("files",
-            ALPROTO_SMB, SIG_FLAG_TOCLIENT, 0,
-            DetectFileInspectGeneric);
+    DetectAppLayerInspectEngineRegister2(
+            "files", ALPROTO_SMB, SIG_FLAG_TOSERVER, 0, DetectFileInspectGeneric, NULL);
+    DetectAppLayerInspectEngineRegister2(
+            "files", ALPROTO_SMB, SIG_FLAG_TOCLIENT, 0, DetectFileInspectGeneric, NULL);
+
+    //this is used by filestore
+    DetectAppLayerInspectEngineRegister2("files", ALPROTO_HTTP2, SIG_FLAG_TOSERVER,
+            HTTP2StateDataClient, DetectFileInspectGeneric, NULL);
+    DetectAppLayerInspectEngineRegister2("files", ALPROTO_HTTP2, SIG_FLAG_TOCLIENT,
+            HTTP2StateDataServer, DetectFileInspectGeneric, NULL);
 
     g_file_match_list_id = DetectBufferTypeGetByName("files");
 
-    AppProto protos_ts[] = {
-        ALPROTO_HTTP, ALPROTO_SMTP, ALPROTO_FTP, ALPROTO_SMB, ALPROTO_NFS, 0 };
-    AppProto protos_tc[] = {
-        ALPROTO_HTTP, ALPROTO_FTP, ALPROTO_SMB, ALPROTO_NFS, 0 };
+    AppProto protos_ts[] = { ALPROTO_HTTP1, ALPROTO_SMTP, ALPROTO_FTP, ALPROTO_FTPDATA, ALPROTO_SMB,
+        ALPROTO_NFS, 0 };
+    AppProto protos_tc[] = { ALPROTO_HTTP1, ALPROTO_FTP, ALPROTO_FTPDATA, ALPROTO_SMB, ALPROTO_NFS,
+        0 };
 
     for (int i = 0; protos_ts[i] != 0; i++) {
         DetectAppLayerInspectEngineRegister2("file.name", protos_ts[i],
@@ -215,12 +216,13 @@ static int DetectFilenameMatch (DetectEngineThreadCtx *det_ctx,
 /**
  * \brief Parse the filename keyword
  *
+ * \param de_ctx Pointer to the detection engine context
  * \param idstr Pointer to the user provided option
  *
  * \retval filename pointer to DetectFilenameData on success
  * \retval NULL on failure
  */
-static DetectFilenameData *DetectFilenameParse (const char *str, bool negate)
+static DetectFilenameData *DetectFilenameParse (DetectEngineCtx *de_ctx, const char *str, bool negate)
 {
     DetectFilenameData *filename = NULL;
 
@@ -265,7 +267,7 @@ static DetectFilenameData *DetectFilenameParse (const char *str, bool negate)
 
 error:
     if (filename != NULL)
-        DetectFilenameFree(filename);
+        DetectFilenameFree(de_ctx, filename);
     return NULL;
 }
 
@@ -285,7 +287,7 @@ static int DetectFilenameSetup (DetectEngineCtx *de_ctx, Signature *s, const cha
     DetectFilenameData *filename = NULL;
     SigMatch *sm = NULL;
 
-    filename = DetectFilenameParse(str, s->init_data->negated);
+    filename = DetectFilenameParse(de_ctx, str, s->init_data->negated);
     if (filename == NULL)
         goto error;
 
@@ -305,7 +307,7 @@ static int DetectFilenameSetup (DetectEngineCtx *de_ctx, Signature *s, const cha
 
 error:
     if (filename != NULL)
-        DetectFilenameFree(filename);
+        DetectFilenameFree(de_ctx, filename);
     if (sm != NULL)
         SCFree(sm);
     return -1;
@@ -316,7 +318,7 @@ error:
  *
  * \param filename pointer to DetectFilenameData
  */
-static void DetectFilenameFree(void *ptr)
+static void DetectFilenameFree(DetectEngineCtx *de_ctx, void *ptr)
 {
     if (ptr != NULL) {
         DetectFilenameData *filename = (DetectFilenameData *)ptr;
@@ -344,6 +346,7 @@ static int DetectFilenameSetupSticky(DetectEngineCtx *de_ctx, Signature *s, cons
 {
     if (DetectBufferSetActiveList(s, g_file_name_buffer_id) < 0)
         return -1;
+    s->file_flags |= (FILE_SIG_NEED_FILE | FILE_SIG_NEED_FILENAME);
     return 0;
 }
 
@@ -354,8 +357,7 @@ static InspectionBuffer *FilenameGetDataCallback(DetectEngineThreadCtx *det_ctx,
 {
     SCEnter();
 
-    InspectionBufferMultipleForList *fb = InspectionBufferGetMulti(det_ctx, list_id);
-    InspectionBuffer *buffer = InspectionBufferMultipleForListGet(fb, local_file_id);
+    InspectionBuffer *buffer = InspectionBufferMultipleForListGet(det_ctx, list_id, local_file_id);
     if (buffer == NULL)
         return NULL;
     if (!first && buffer->inspect != NULL)
@@ -364,8 +366,7 @@ static InspectionBuffer *FilenameGetDataCallback(DetectEngineThreadCtx *det_ctx,
     const uint8_t *data = cur_file->name;
     uint32_t data_len = cur_file->name_len;
 
-    InspectionBufferSetup(buffer, data, data_len);
-    InspectionBufferApplyTransforms(buffer, transforms);
+    InspectionBufferSetupMulti(buffer, transforms, data, data_len);
 
     SCReturnPtr(buffer, "InspectionBuffer");
 }
@@ -381,8 +382,7 @@ static int DetectEngineInspectFilename(
         transforms = engine->v2.transforms;
     }
 
-    FileContainer *ffc = AppLayerParserGetFiles(f->proto, f->alproto,
-                                                f->alstate, flags);
+    FileContainer *ffc = AppLayerParserGetFiles(f, flags);
     if (ffc == NULL) {
         return DETECT_ENGINE_INSPECT_SIG_NO_MATCH;
     }
@@ -442,8 +442,7 @@ static void PrefilterTxFilename(DetectEngineThreadCtx *det_ctx,
     const MpmCtx *mpm_ctx = ctx->mpm_ctx;
     const int list_id = ctx->list_id;
 
-    FileContainer *ffc = AppLayerParserGetFiles(f->proto, f->alproto,
-                                                f->alstate, flags);
+    FileContainer *ffc = AppLayerParserGetFiles(f, flags);
     int local_file_id = 0;
     if (ffc != NULL) {
         File *file = ffc->head;
@@ -461,6 +460,7 @@ static void PrefilterTxFilename(DetectEngineThreadCtx *det_ctx,
                         &det_ctx->mtcu, &det_ctx->pmq,
                         buffer->inspect, buffer->inspect_len);
             }
+            local_file_id++;
         }
     }
 }
@@ -510,9 +510,9 @@ static int DetectFilenameSignatureParseTest01(void)
  */
 static int DetectFilenameTestParse01 (void)
 {
-    DetectFilenameData *dnd = DetectFilenameParse("secret.pdf", false);
+    DetectFilenameData *dnd = DetectFilenameParse(NULL, "secret.pdf", false);
     if (dnd != NULL) {
-        DetectFilenameFree(dnd);
+        DetectFilenameFree(NULL, dnd);
         return 1;
     }
     return 0;
@@ -525,13 +525,13 @@ static int DetectFilenameTestParse02 (void)
 {
     int result = 0;
 
-    DetectFilenameData *dnd = DetectFilenameParse("backup.tar.gz", false);
+    DetectFilenameData *dnd = DetectFilenameParse(NULL, "backup.tar.gz", false);
     if (dnd != NULL) {
         if (dnd->len == 13 && memcmp(dnd->name, "backup.tar.gz", 13) == 0) {
             result = 1;
         }
 
-        DetectFilenameFree(dnd);
+        DetectFilenameFree(NULL, dnd);
         return result;
     }
     return 0;
@@ -544,30 +544,28 @@ static int DetectFilenameTestParse03 (void)
 {
     int result = 0;
 
-    DetectFilenameData *dnd = DetectFilenameParse("cmd.exe", false);
+    DetectFilenameData *dnd = DetectFilenameParse(NULL, "cmd.exe", false);
     if (dnd != NULL) {
         if (dnd->len == 7 && memcmp(dnd->name, "cmd.exe", 7) == 0) {
             result = 1;
         }
 
-        DetectFilenameFree(dnd);
+        DetectFilenameFree(NULL, dnd);
         return result;
     }
     return 0;
 }
 
-#endif /* UNITTESTS */
 
 /**
  * \brief this function registers unit tests for DetectFilename
  */
 void DetectFilenameRegisterTests(void)
 {
-#ifdef UNITTESTS /* UNITTESTS */
     UtRegisterTest("DetectFilenameSignatureParseTest01", DetectFilenameSignatureParseTest01);
 
     UtRegisterTest("DetectFilenameTestParse01", DetectFilenameTestParse01);
     UtRegisterTest("DetectFilenameTestParse02", DetectFilenameTestParse02);
     UtRegisterTest("DetectFilenameTestParse03", DetectFilenameTestParse03);
-#endif /* UNITTESTS */
 }
+#endif /* UNITTESTS */

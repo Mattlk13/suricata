@@ -1,4 +1,4 @@
-/* Copyright (C) 2017 Open Information Security Foundation
+/* Copyright (C) 2017-2020 Open Information Security Foundation
  *
  * You can copy, redistribute or modify this Program under the terms of
  * the GNU General Public License version 2 as published by the Free
@@ -26,36 +26,33 @@
 
 #include "rust.h"
 #include "app-layer-smb.h"
-#include "rust-smb-smb-gen.h"
-#include "rust-smb-files-gen.h"
 #include "util-misc.h"
 
 #define MIN_REC_SIZE 32+4 // SMB hdr + nbss hdr
 
-static int SMBTCPParseRequest(Flow *f, void *state,
-        AppLayerParserState *pstate, uint8_t *input, uint32_t input_len,
+static AppLayerResult SMBTCPParseRequest(Flow *f, void *state,
+        AppLayerParserState *pstate, const uint8_t *input, uint32_t input_len,
         void *local_data, const uint8_t flags)
 {
     SCLogDebug("SMBTCPParseRequest");
     uint16_t file_flags = FileFlowToFlags(f, STREAM_TOSERVER);
     rs_smb_setfileflags(0, state, file_flags|FILE_USE_DETECT);
 
-    int res;
     if (input == NULL && input_len > 0) {
-        res = rs_smb_parse_request_tcp_gap(state, input_len);
+        AppLayerResult res = rs_smb_parse_request_tcp_gap(state, input_len);
+        SCLogDebug("SMB request GAP of %u bytes, retval %d", input_len, res.status);
+        SCReturnStruct(res);
     } else {
-        res = rs_smb_parse_request_tcp(f, state, pstate, input, input_len,
-            local_data, flags);
-    }
-    if (res != 1) {
+        AppLayerResult res = rs_smb_parse_request_tcp(f, state, pstate,
+                input, input_len, local_data, flags);
         SCLogDebug("SMB request%s of %u bytes, retval %d",
-                (input == NULL && input_len > 0) ? " is GAP" : "", input_len, res);
+                (input == NULL && input_len > 0) ? " is GAP" : "", input_len, res.status);
+        SCReturnStruct(res);
     }
-    return res;
 }
 
-static int SMBTCPParseResponse(Flow *f, void *state,
-        AppLayerParserState *pstate, uint8_t *input, uint32_t input_len,
+static AppLayerResult SMBTCPParseResponse(Flow *f, void *state,
+        AppLayerParserState *pstate, const uint8_t *input, uint32_t input_len,
         void *local_data, const uint8_t flags)
 {
     SCLogDebug("SMBTCPParseResponse");
@@ -63,22 +60,19 @@ static int SMBTCPParseResponse(Flow *f, void *state,
     rs_smb_setfileflags(1, state, file_flags|FILE_USE_DETECT);
 
     SCLogDebug("SMBTCPParseResponse %p/%u", input, input_len);
-    int res;
     if (input == NULL && input_len > 0) {
-        res = rs_smb_parse_response_tcp_gap(state, input_len);
+        AppLayerResult res = rs_smb_parse_response_tcp_gap(state, input_len);
+        SCLogDebug("SMB response GAP of %u bytes, retval %d", input_len, res.status);
+        SCReturnStruct(res);
     } else {
-        res = rs_smb_parse_response_tcp(f, state, pstate, input, input_len,
-            local_data, flags);
+        AppLayerResult res = rs_smb_parse_response_tcp(f, state, pstate,
+                input, input_len, local_data, flags);
+        SCReturnStruct(res);
     }
-    if (res != 1) {
-        SCLogDebug("SMB response%s of %u bytes, retval %d",
-                (input == NULL && input_len > 0) ? " is GAP" : "", input_len, res);
-    }
-    return res;
 }
 
 static uint16_t SMBTCPProbe(Flow *f, uint8_t direction,
-        uint8_t *input, uint32_t len, uint8_t *rdir)
+        const uint8_t *input, uint32_t len, uint8_t *rdir)
 {
     SCLogDebug("SMBTCPProbe");
 
@@ -103,7 +97,7 @@ static uint16_t SMBTCPProbe(Flow *f, uint8_t direction,
  *         back to the port numbers for a hint
  */
 static uint16_t SMB3TCPProbe(Flow *f, uint8_t direction,
-        uint8_t *input, uint32_t len, uint8_t *rdir)
+        const uint8_t *input, uint32_t len, uint8_t *rdir)
 {
     SCEnter();
 
@@ -155,16 +149,6 @@ static AppLayerGetTxIterTuple SMBGetTxIterator(
 }
 
 
-static void SMBSetTxLogged(void *alstate, void *tx, uint32_t logger)
-{
-    rs_smb_tx_set_logged(alstate, tx, logger);
-}
-
-static LoggerId SMBGetTxLogged(void *alstate, void *tx)
-{
-    return rs_smb_tx_get_logged(alstate, tx);
-}
-
 static void SMBStateTransactionFree(void *state, uint64_t tx_id)
 {
     rs_smb_state_tx_free(state, tx_id);
@@ -201,16 +185,6 @@ static int SMBGetEventInfo(const char *event_name, int *event_id,
     AppLayerEventType *event_type)
 {
     return rs_smb_state_get_event_info(event_name, event_id, event_type);
-}
-
-static void SMBSetDetectFlags(void *tx, uint8_t dir, uint64_t flags)
-{
-    rs_smb_tx_set_detect_flags(tx, dir, flags);
-}
-
-static uint64_t SMBGetDetectFlags(void *tx, uint8_t dir)
-{
-    return rs_smb_tx_get_detect_flags(tx, dir);
 }
 
 static void SMBStateTruncate(void *state, uint8_t direction)
@@ -280,16 +254,15 @@ void RegisterSMBParsers(void)
                     MIN_REC_SIZE, SMBTCPProbe, SMBTCPProbe);
             /* if we have no config, we enable the default port 445 */
             if (!have_cfg) {
-                SCLogWarning(SC_ERR_SMB_CONFIG, "no SMB TCP config found, "
-                                                "enabling SMB detection on "
-                                                "port 445.");
+                SCLogConfig("no SMB TCP config found, enabling SMB detection "
+                            "on port 445.");
                 AppLayerProtoDetectPPRegister(IPPROTO_TCP, "445", ALPROTO_SMB, 0,
                         MIN_REC_SIZE, STREAM_TOSERVER, SMBTCPProbe,
                         SMBTCPProbe);
             }
         }
     } else {
-        SCLogInfo("Protocol detection and parser disabled for %s protocol.",
+        SCLogConfig("Protocol detection and parser disabled for %s protocol.",
                   proto_name);
         return;
     }
@@ -317,17 +290,14 @@ void RegisterSMBParsers(void)
         AppLayerParserRegisterGetTxIterator(IPPROTO_TCP, ALPROTO_SMB, SMBGetTxIterator);
         AppLayerParserRegisterGetTxCnt(IPPROTO_TCP, ALPROTO_SMB,
                 SMBGetTxCnt);
-        AppLayerParserRegisterLoggerFuncs(IPPROTO_TCP, ALPROTO_SMB,
-                SMBGetTxLogged, SMBSetTxLogged);
         AppLayerParserRegisterGetStateProgressFunc(IPPROTO_TCP, ALPROTO_SMB,
                 SMBGetAlstateProgress);
-        AppLayerParserRegisterGetStateProgressCompletionStatus(ALPROTO_SMB,
-                rs_smb_state_progress_completion_status);
-        AppLayerParserRegisterDetectFlagsFuncs(IPPROTO_TCP, ALPROTO_SMB,
-                                               SMBGetDetectFlags, SMBSetDetectFlags);
+        AppLayerParserRegisterStateProgressCompletionStatus(ALPROTO_SMB, 1, 1);
         AppLayerParserRegisterTruncateFunc(IPPROTO_TCP, ALPROTO_SMB,
                                           SMBStateTruncate);
         AppLayerParserRegisterGetFilesFunc(IPPROTO_TCP, ALPROTO_SMB, SMBGetFiles);
+
+        AppLayerParserRegisterTxDataFunc(IPPROTO_TCP, ALPROTO_SMB, rs_smb_get_tx_data);
 
         /* This parser accepts gaps. */
         AppLayerParserRegisterOptionFlags(IPPROTO_TCP, ALPROTO_SMB,
@@ -346,7 +316,7 @@ void RegisterSMBParsers(void)
 
         AppLayerParserSetStreamDepth(IPPROTO_TCP, ALPROTO_SMB, stream_depth);
     } else {
-        SCLogInfo("Parsed disabled for %s protocol. Protocol detection"
+        SCLogConfig("Parsed disabled for %s protocol. Protocol detection"
                   "still on.", proto_name);
     }
 #ifdef UNITTESTS
@@ -367,7 +337,7 @@ static int SMBParserTxCleanupTest(void)
     AppLayerParserThreadCtx *alp_tctx = AppLayerParserThreadCtxAlloc();
     FAIL_IF_NULL(alp_tctx);
 
-    StreamTcpInitConfig(TRUE);
+    StreamTcpInitConfig(true);
     TcpSession ssn;
     memset(&ssn, 0, sizeof(ssn));
 
@@ -510,7 +480,7 @@ static int SMBParserTxCleanupTest(void)
     FAIL_IF_NOT(ret[3] == 9); // min_id
 
     AppLayerParserThreadCtxFree(alp_tctx);
-    StreamTcpFreeConfig(TRUE);
+    StreamTcpFreeConfig(true);
     UTHFreeFlow(f);
 
     PASS;

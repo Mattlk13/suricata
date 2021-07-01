@@ -101,8 +101,6 @@ uint8_t FlowGetProtoMapping(uint8_t proto)
             return FLOW_PROTO_UDP;
         case IPPROTO_ICMP:
             return FLOW_PROTO_ICMP;
-        case IPPROTO_SCTP:
-            return FLOW_PROTO_SCTP;
         default:
             return FLOW_PROTO_DEFAULT;
     }
@@ -117,8 +115,6 @@ uint8_t FlowGetReverseProtoMapping(uint8_t rproto)
             return IPPROTO_UDP;
         case FLOW_PROTO_ICMP:
             return IPPROTO_ICMP;
-        case FLOW_PROTO_SCTP:
-            return IPPROTO_SCTP;
         default:
             exit(EXIT_FAILURE);
     }
@@ -191,6 +187,8 @@ void FlowInit(Flow *f, const Packet *p)
     } else if (p->sctph != NULL) { /* XXX MACRO */
         SET_SCTP_SRC_PORT(p,&f->sp);
         SET_SCTP_DST_PORT(p,&f->dp);
+    } else if (p->esph != NULL) {
+        f->esp.spi = ESP_GET_SPI(p);
     } /* XXX handle default */
 #ifdef DEBUG
     else {
@@ -200,13 +198,26 @@ void FlowInit(Flow *f, const Packet *p)
     COPY_TIMESTAMP(&p->ts, &f->startts);
 
     f->protomap = FlowGetProtoMapping(f->proto);
+    f->timeout_policy = FlowGetTimeoutPolicy(f);
+    const uint32_t timeout_at = (uint32_t)f->startts.tv_sec + f->timeout_policy;
+    f->timeout_at = timeout_at;
+
+    if (MacSetFlowStorageEnabled()) {
+        MacSet *ms = FlowGetStorageById(f, MacSetGetFlowStorageID());
+        if (ms != NULL) {
+            MacSetReset(ms);
+        } else {
+            ms = MacSetInit(10);
+            FlowSetStorageById(f, MacSetGetFlowStorageID(), ms);
+        }
+    }
 
     SCReturn;
 }
 
-int g_bypass_info_id = -1;
+FlowStorageId g_bypass_info_id = { .id = -1 };
 
-int GetFlowBypassInfoID(void)
+FlowStorageId GetFlowBypassInfoID(void)
 {
     return g_bypass_info_id;
 }

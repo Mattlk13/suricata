@@ -22,7 +22,6 @@
  */
 
 #include "suricata-common.h"
-#include "config.h"
 #include "suricata.h"
 #include "util-byte.h"
 #include "util-debug.h"
@@ -209,7 +208,7 @@ int ParseSizeStringU64(const char *size, uint64_t *res)
     if (r < 0)
         return r;
 
-    if (temp_res > UINT64_MAX)
+    if (temp_res > (double) UINT64_MAX)
         return -1;
 
     *res = temp_res;

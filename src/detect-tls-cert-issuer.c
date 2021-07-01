@@ -72,7 +72,7 @@ void DetectTlsIssuerRegister(void)
     sigmatch_table[DETECT_AL_TLS_CERT_ISSUER].name = "tls.cert_issuer";
     sigmatch_table[DETECT_AL_TLS_CERT_ISSUER].alias = "tls_cert_issuer";
     sigmatch_table[DETECT_AL_TLS_CERT_ISSUER].desc = "content modifier to match specifically and only on the TLS cert issuer buffer";
-    sigmatch_table[DETECT_AL_TLS_CERT_ISSUER].url = DOC_URL DOC_VERSION "/rules/tls-keywords.html#tls-cert-issuer";
+    sigmatch_table[DETECT_AL_TLS_CERT_ISSUER].url = "/rules/tls-keywords.html#tls-cert-issuer";
     sigmatch_table[DETECT_AL_TLS_CERT_ISSUER].Setup = DetectTlsIssuerSetup;
 #ifdef UNITTESTS
     sigmatch_table[DETECT_AL_TLS_CERT_ISSUER].RegisterTests = DetectTlsIssuerRegisterTests;
@@ -131,7 +131,7 @@ static InspectionBuffer *GetData(DetectEngineThreadCtx *det_ctx,
         const uint32_t data_len = strlen(ssl_state->server_connp.cert0_issuerdn);
         const uint8_t *data = (uint8_t *)ssl_state->server_connp.cert0_issuerdn;
 
-        InspectionBufferSetup(buffer, data, data_len);
+        InspectionBufferSetup(det_ctx, list_id, buffer, data, data_len);
         InspectionBufferApplyTransforms(buffer, transforms);
     }
 

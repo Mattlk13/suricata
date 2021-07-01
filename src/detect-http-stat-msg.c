@@ -81,7 +81,7 @@ void DetectHttpStatMsgRegister (void)
     /* http_stat_msg content modifier */
     sigmatch_table[DETECT_AL_HTTP_STAT_MSG].name = "http_stat_msg";
     sigmatch_table[DETECT_AL_HTTP_STAT_MSG].desc = "content modifier to match on HTTP stat-msg-buffer";
-    sigmatch_table[DETECT_AL_HTTP_STAT_MSG].url = DOC_URL DOC_VERSION "/rules/http-keywords.html#http-stat-msg";
+    sigmatch_table[DETECT_AL_HTTP_STAT_MSG].url = "/rules/http-keywords.html#http-stat-msg";
     sigmatch_table[DETECT_AL_HTTP_STAT_MSG].Setup = DetectHttpStatMsgSetup;
 #ifdef UNITTESTS
     sigmatch_table[DETECT_AL_HTTP_STAT_MSG].RegisterTests = DetectHttpStatMsgRegisterTests;
@@ -92,17 +92,15 @@ void DetectHttpStatMsgRegister (void)
     /* http.stat_msg sticky buffer */
     sigmatch_table[DETECT_HTTP_STAT_MSG].name = "http.stat_msg";
     sigmatch_table[DETECT_HTTP_STAT_MSG].desc = "sticky buffer to match on the HTTP response status message";
-    sigmatch_table[DETECT_HTTP_STAT_MSG].url = DOC_URL DOC_VERSION "/rules/http-keywords.html#http_stat-msg";
+    sigmatch_table[DETECT_HTTP_STAT_MSG].url = "/rules/http-keywords.html#http-stat-msg";
     sigmatch_table[DETECT_HTTP_STAT_MSG].Setup = DetectHttpStatMsgSetupSticky;
     sigmatch_table[DETECT_HTTP_STAT_MSG].flags |= SIGMATCH_NOOPT|SIGMATCH_INFO_STICKY_BUFFER;
 
-    DetectAppLayerInspectEngineRegister2("http_stat_msg", ALPROTO_HTTP,
-            SIG_FLAG_TOCLIENT, HTP_RESPONSE_LINE,
-            DetectEngineInspectBufferGeneric, GetData);
+    DetectAppLayerInspectEngineRegister2("http_stat_msg", ALPROTO_HTTP1, SIG_FLAG_TOCLIENT,
+            HTP_RESPONSE_LINE, DetectEngineInspectBufferGeneric, GetData);
 
-    DetectAppLayerMpmRegister2("http_stat_msg", SIG_FLAG_TOCLIENT, 3,
-            PrefilterGenericMpmRegister, GetData, ALPROTO_HTTP,
-            HTP_RESPONSE_LINE);
+    DetectAppLayerMpmRegister2("http_stat_msg", SIG_FLAG_TOCLIENT, 3, PrefilterGenericMpmRegister,
+            GetData, ALPROTO_HTTP1, HTP_RESPONSE_LINE);
 
     DetectBufferTypeSetDescriptionByName("http_stat_msg",
             "http response status message");
@@ -123,10 +121,8 @@ void DetectHttpStatMsgRegister (void)
 
 static int DetectHttpStatMsgSetup(DetectEngineCtx *de_ctx, Signature *s, const char *arg)
 {
-    return DetectEngineContentModifierBufferSetup(de_ctx, s, arg,
-                                                  DETECT_AL_HTTP_STAT_MSG,
-                                                  g_http_stat_msg_buffer_id,
-                                                  ALPROTO_HTTP);
+    return DetectEngineContentModifierBufferSetup(
+            de_ctx, s, arg, DETECT_AL_HTTP_STAT_MSG, g_http_stat_msg_buffer_id, ALPROTO_HTTP1);
 }
 
 /**
@@ -142,7 +138,8 @@ static int DetectHttpStatMsgSetupSticky(DetectEngineCtx *de_ctx, Signature *s, c
 {
     if (DetectBufferSetActiveList(s, g_http_stat_msg_buffer_id) < 0)
         return -1;
-    s->alproto = ALPROTO_HTTP;
+    if (DetectSignatureSetAppProto(s, ALPROTO_HTTP1) < 0)
+        return -1;
     return 0;
 }
 
@@ -162,7 +159,7 @@ static InspectionBuffer *GetData(DetectEngineThreadCtx *det_ctx,
         const uint32_t data_len = bstr_len(tx->response_message);
         const uint8_t *data = bstr_ptr(tx->response_message);
 
-        InspectionBufferSetup(buffer, data, data_len);
+        InspectionBufferSetup(det_ctx, list_id, buffer, data, data_len);
         InspectionBufferApplyTransforms(buffer, transforms);
     }
 

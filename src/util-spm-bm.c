@@ -78,8 +78,8 @@ BmCtx *BoyerMooreCtxInit(const uint8_t *needle, uint16_t needle_len)
 {
     BmCtx *new = SCMalloc(sizeof(BmCtx) + sizeof(uint16_t) * (needle_len + 1));
     if (unlikely(new == NULL)) {
-        SCLogError(SC_ERR_FATAL, "Fatal error encountered in BoyerMooreCtxInit. Exiting...");
-        exit(EXIT_FAILURE);
+        FatalError(SC_ERR_FATAL,
+                   "Fatal error encountered in BoyerMooreCtxInit. Exiting...");
     }
 
     /* Prepare bad chars */
@@ -87,8 +87,8 @@ BmCtx *BoyerMooreCtxInit(const uint8_t *needle, uint16_t needle_len)
 
     /* Prepare good Suffixes */
     if (PreBmGs(needle, needle_len, new->bmGs) == -1) {
-        SCLogError(SC_ERR_FATAL, "Fatal error encountered in BooyerMooreCtxInit. Exiting...");
-        exit(EXIT_FAILURE);
+        FatalError(SC_ERR_FATAL,
+                   "Fatal error encountered in BooyerMooreCtxInit. Exiting...");
     }
 
 
@@ -221,6 +221,7 @@ static void PreBmBcNocase(const uint8_t *x, uint16_t m, uint16_t *bmBc)
     }
     for (i = 0; i < m - 1; ++i) {
         bmBc[u8_tolower((unsigned char)x[i])] = m - 1 - i;
+        bmBc[u8_toupper((unsigned char)x[i])] = m - 1 - i;
     }
 }
 
@@ -372,7 +373,7 @@ uint8_t *BoyerMooreNocase(const uint8_t *x, uint16_t m, const uint8_t *y, uint32
         if (i < 0) {
             return (uint8_t *)(y + j);
         } else {
-            j += (m1 = bmGs[i]) > (m2 = bmBc[u8_tolower(y[i + j])] - m + 1 + i)?
+            j += (m1 = bmGs[i]) > (m2 = bmBc[y[i + j]] - m + 1 + i)?
                 m1: m2;
         }
     }

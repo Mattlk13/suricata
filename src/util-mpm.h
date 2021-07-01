@@ -117,11 +117,13 @@ typedef struct MpmCtxFactoryItem_ {
     MpmCtx *mpm_ctx_ts;
     MpmCtx *mpm_ctx_tc;
     int32_t id;
+    int32_t sm_list;
 } MpmCtxFactoryItem;
 
 typedef struct MpmCtxFactoryContainer_ {
     MpmCtxFactoryItem *items;
     int32_t no_of_items;
+    int32_t max_id;
 } MpmCtxFactoryContainer;
 
 /** pattern is case insensitive */
@@ -166,12 +168,12 @@ typedef struct MpmTableElmt_ {
     uint8_t flags;
 } MpmTableElmt;
 
-MpmTableElmt mpm_table[MPM_TABLE_SIZE];
-int mpm_default_matcher;
+extern MpmTableElmt mpm_table[MPM_TABLE_SIZE];
+extern int mpm_default_matcher;
 
 struct DetectEngineCtx_;
 
-int32_t MpmFactoryRegisterMpmCtxProfile(struct DetectEngineCtx_ *, const char *);
+int32_t MpmFactoryRegisterMpmCtxProfile(struct DetectEngineCtx_ *, const char *, const int);
 void MpmFactoryReClaimMpmCtx(const struct DetectEngineCtx_ *, MpmCtx *);
 MpmCtx *MpmFactoryGetMpmCtxForProfile(const struct DetectEngineCtx_ *, int32_t, int);
 void MpmFactoryDeRegisterAllMpmCtxProfiles(struct DetectEngineCtx_ *);

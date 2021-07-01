@@ -38,12 +38,12 @@
 #include "runmodes.h"
 #include "util-unittest.h"
 #include "util-misc.h"
+#include "util-plugin.h"
 
 #include "output.h"
 
 #include "alert-fastlog.h"
 #include "alert-prelude.h"
-#include "alert-unified2-alert.h"
 #include "alert-debuglog.h"
 
 #include "log-httplog.h"
@@ -55,7 +55,10 @@
 #include "flow-bypass.h"
 #include "counters.h"
 
+#include "suricata-plugin.h"
+
 int debuglog_enabled = 0;
+int threading_set_cpu_affinity = FALSE;
 
 /* Runmode Global Thread Names */
 const char *thread_name_autofp = "RX";
@@ -122,6 +125,8 @@ static const char *RunModeTranslateModeToName(int runmode)
 #else
             return "PFRING(DISABLED)";
 #endif
+        case RUNMODE_PLUGIN:
+            return "PLUGIN";
         case RUNMODE_NFQ:
             return "NFQ";
         case RUNMODE_NFLOG:
@@ -275,7 +280,8 @@ void RunModeListRunmodes(void)
 
 /**
  */
-void RunModeDispatch(int runmode, const char *custom_mode)
+void RunModeDispatch(int runmode, const char *custom_mode,
+    const char *capture_plugin_name, const char *capture_plugin_args)
 {
     char *local_custom_mode = NULL;
 
@@ -301,6 +307,17 @@ void RunModeDispatch(int runmode, const char *custom_mode)
                 custom_mode = RunModeIdsPfringGetDefaultMode();
                 break;
 #endif
+            case RUNMODE_PLUGIN: {
+#ifdef HAVE_PLUGINS
+                SCCapturePlugin *plugin = SCPluginFindCaptureByName(capture_plugin_name);
+                if (plugin == NULL) {
+                    FatalError(SC_ERR_PLUGIN, "No capture plugin found with name %s",
+                            capture_plugin_name);
+                }
+                custom_mode = (const char *)plugin->GetDefaultMode();
+#endif
+                break;
+            }
             case RUNMODE_NFQ:
                 custom_mode = RunModeIpsNFQGetDefaultMode();
                 break;
@@ -334,8 +351,7 @@ void RunModeDispatch(int runmode, const char *custom_mode)
                 break;
 #endif
             default:
-                SCLogError(SC_ERR_UNKNOWN_RUN_MODE, "Unknown runtime mode. Aborting");
-                exit(EXIT_FAILURE);
+                FatalError(SC_ERR_FATAL, "Unknown runtime mode. Aborting");
         }
     } else { /* if (custom_mode == NULL) */
         /* Add compability with old 'worker' name */
@@ -344,8 +360,7 @@ void RunModeDispatch(int runmode, const char *custom_mode)
                          "to 'workers', please modify your setup.");
             local_custom_mode = SCStrdup("workers");
             if (unlikely(local_custom_mode == NULL)) {
-                SCLogError(SC_ERR_MEM_ALLOC, "Unable to dup custom mode");
-                exit(EXIT_FAILURE);
+                FatalError(SC_ERR_FATAL, "Unable to dup custom mode");
             }
             custom_mode = local_custom_mode;
         }
@@ -366,8 +381,7 @@ void RunModeDispatch(int runmode, const char *custom_mode)
     }
     active_runmode = SCStrdup(custom_mode);
     if (unlikely(active_runmode == NULL)) {
-        SCLogError(SC_ERR_MEM_ALLOC, "Unable to dup active mode");
-        exit(EXIT_FAILURE);
+        FatalError(SC_ERR_FATAL, "Unable to dup active mode");
     }
 
     if (strcasecmp(active_runmode, "autofp") == 0) {
@@ -531,6 +545,8 @@ void RunModeShutDown(void)
     OutputStatsShutdown();
     OutputFlowShutdown();
 
+    OutputClearActiveLoggers();
+
     /* Reset logger counts. */
     file_logger_count = 0;
     filedata_logger_count = 0;
@@ -622,11 +638,17 @@ static void RunModeInitializeEveOutput(ConfNode *conf, OutputCtx *parent_ctx)
 
     ConfNode *type = NULL;
     TAILQ_FOREACH(type, &types->head, next) {
-        SCLogConfig("enabling 'eve-log' module '%s'", type->val);
-
         int sub_count = 0;
         char subname[256];
-        snprintf(subname, sizeof(subname), "eve-log.%s", type->val);
+
+        if (strcmp(type->val, "ikev2") == 0) {
+            SCLogWarning(SC_ERR_INVALID_ARGUMENT, "eve module 'ikev2' has been replaced by 'ike'");
+            strlcpy(subname, "eve-log.ike", sizeof(subname));
+        } else {
+            snprintf(subname, sizeof(subname), "eve-log.%s", type->val);
+        }
+
+        SCLogConfig("enabling 'eve-log' module '%s'", type->val);
 
         ConfNode *sub_output_config = ConfNodeLookupChild(type, type->val);
         if (sub_output_config != NULL) {
@@ -758,20 +780,16 @@ void RunModeInitializeOutputs(void)
                     "(see https://redmine.openinfosecfoundation.org/issues/353"
                     " for an explanation)");
             continue;
+        } else if (strncmp(output->val, "unified2-", sizeof("unified2-") - 1) == 0) {
+            SCLogWarning(SC_ERR_NOT_SUPPORTED,
+                    "Unified2 is no longer supported.");
+            continue;
         } else if (strcmp(output->val, "alert-prelude") == 0) {
 #ifndef PRELUDE
             SCLogWarning(SC_ERR_NOT_SUPPORTED,
                     "Prelude support not compiled in. Reconfigure/"
                     "recompile with --enable-prelude to add Prelude "
                     "support.");
-            continue;
-#endif
-        } else if (strcmp(output->val, "eve-log") == 0) {
-#ifndef HAVE_LIBJANSSON
-            SCLogWarning(SC_ERR_NOT_SUPPORTED,
-                    "Eve-log support not compiled in. Reconfigure/"
-                    "recompile with libjansson and its development "
-                    "files installed to add eve-log support.");
             continue;
 #endif
         } else if (strcmp(output->val, "lua") == 0) {
@@ -898,6 +916,7 @@ void RunModeInitializeOutputs(void)
             AppLayerParserRegisterLoggerBits(IPPROTO_UDP, a, logger_bits[a]);
 
     }
+    OutputSetupActiveLoggers();
 }
 
 float threading_detect_ratio = 1;

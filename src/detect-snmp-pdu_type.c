@@ -1,4 +1,4 @@
-/* Copyright (C) 2015-2019 Open Information Security Foundation
+/* Copyright (C) 2015-2020 Open Information Security Foundation
  *
  * You can copy, redistribute or modify this Program under the terms of
  * the GNU General Public License version 2 as published by the Free
@@ -29,16 +29,13 @@
 #include "detect-engine-content-inspection.h"
 #include "detect-snmp-pdu_type.h"
 #include "app-layer-parser.h"
-
-#include "rust-snmp-snmp-gen.h"
-#include "rust-snmp-detect-gen.h"
+#include "rust.h"
 
 /**
  *   [snmp.pdu_type]:<type>;
  */
 #define PARSE_REGEX "^\\s*([0-9]+)\\s*$"
-static pcre *parse_regex;
-static pcre_extra *parse_regex_study;
+static DetectParseRegex parse_regex;
 
 typedef struct DetectSNMPPduTypeData_ {
     uint32_t pdu_type;
@@ -46,17 +43,15 @@ typedef struct DetectSNMPPduTypeData_ {
 
 static DetectSNMPPduTypeData *DetectSNMPPduTypeParse (const char *);
 static int DetectSNMPPduTypeSetup (DetectEngineCtx *, Signature *s, const char *str);
-static void DetectSNMPPduTypeFree(void *);
+static void DetectSNMPPduTypeFree(DetectEngineCtx *, void *);
 #ifdef UNITTESTS
 static void DetectSNMPPduTypeRegisterTests(void);
 #endif
 static int g_snmp_pdu_type_buffer_id = 0;
 
-static int DetectEngineInspectSNMPRequestGeneric(ThreadVars *tv,
-        DetectEngineCtx *de_ctx, DetectEngineThreadCtx *det_ctx,
-        const Signature *s, const SigMatchData *smd,
-        Flow *f, uint8_t flags, void *alstate,
-        void *txv, uint64_t tx_id);
+static int DetectEngineInspectSNMPRequestGeneric(DetectEngineCtx *de_ctx,
+        DetectEngineThreadCtx *det_ctx, const struct DetectEngineAppInspectionEngine_ *engine,
+        const Signature *s, Flow *f, uint8_t flags, void *alstate, void *txv, uint64_t tx_id);
 
 static int DetectSNMPPduTypeMatch (DetectEngineThreadCtx *, Flow *,
                                    uint8_t, void *, void *, const Signature *,
@@ -65,8 +60,8 @@ static int DetectSNMPPduTypeMatch (DetectEngineThreadCtx *, Flow *,
 void DetectSNMPPduTypeRegister(void)
 {
     sigmatch_table[DETECT_AL_SNMP_PDU_TYPE].name = "snmp.pdu_type";
-    sigmatch_table[DETECT_AL_SNMP_PDU_TYPE].desc = "match SNMP Pdu type";
-    sigmatch_table[DETECT_AL_SNMP_PDU_TYPE].url = DOC_URL DOC_VERSION "/rules/snmp-keywords.html#snmp.pdu_type";
+    sigmatch_table[DETECT_AL_SNMP_PDU_TYPE].desc = "match SNMP PDU type";
+    sigmatch_table[DETECT_AL_SNMP_PDU_TYPE].url = "/rules/snmp-keywords.html#snmp-pdu-type";
     sigmatch_table[DETECT_AL_SNMP_PDU_TYPE].Match = NULL;
     sigmatch_table[DETECT_AL_SNMP_PDU_TYPE].AppLayerTxMatch = DetectSNMPPduTypeMatch;
     sigmatch_table[DETECT_AL_SNMP_PDU_TYPE].Setup = DetectSNMPPduTypeSetup;
@@ -74,29 +69,24 @@ void DetectSNMPPduTypeRegister(void)
 #ifdef UNITTESTS
     sigmatch_table[DETECT_AL_SNMP_PDU_TYPE].RegisterTests = DetectSNMPPduTypeRegisterTests;
 #endif
-    sigmatch_table[DETECT_AL_SNMP_PDU_TYPE].flags |= SIGMATCH_NOOPT;
 
-    DetectSetupParseRegexes(PARSE_REGEX, &parse_regex, &parse_regex_study);
+    DetectSetupParseRegexes(PARSE_REGEX, &parse_regex);
 
-    DetectAppLayerInspectEngineRegister("snmp.pdu_type",
-            ALPROTO_SNMP, SIG_FLAG_TOSERVER, 0,
-            DetectEngineInspectSNMPRequestGeneric);
+    DetectAppLayerInspectEngineRegister2("snmp.pdu_type", ALPROTO_SNMP, SIG_FLAG_TOSERVER, 0,
+            DetectEngineInspectSNMPRequestGeneric, NULL);
 
-    DetectAppLayerInspectEngineRegister("snmp.pdu_type",
-            ALPROTO_SNMP, SIG_FLAG_TOCLIENT, 0,
-            DetectEngineInspectSNMPRequestGeneric);
+    DetectAppLayerInspectEngineRegister2("snmp.pdu_type", ALPROTO_SNMP, SIG_FLAG_TOCLIENT, 0,
+            DetectEngineInspectSNMPRequestGeneric, NULL);
 
     g_snmp_pdu_type_buffer_id = DetectBufferTypeGetByName("snmp.pdu_type");
 }
 
-static int DetectEngineInspectSNMPRequestGeneric(ThreadVars *tv,
-        DetectEngineCtx *de_ctx, DetectEngineThreadCtx *det_ctx,
-        const Signature *s, const SigMatchData *smd,
-        Flow *f, uint8_t flags, void *alstate,
-        void *txv, uint64_t tx_id)
+static int DetectEngineInspectSNMPRequestGeneric(DetectEngineCtx *de_ctx,
+        DetectEngineThreadCtx *det_ctx, const struct DetectEngineAppInspectionEngine_ *engine,
+        const Signature *s, Flow *f, uint8_t flags, void *alstate, void *txv, uint64_t tx_id)
 {
-    return DetectEngineInspectGenericList(tv, de_ctx, det_ctx, s, smd,
-                                          f, flags, alstate, txv, tx_id);
+    return DetectEngineInspectGenericList(
+            de_ctx, det_ctx, s, engine->smd, f, flags, alstate, txv, tx_id);
 }
 
 /**
@@ -144,14 +134,12 @@ static int DetectSNMPPduTypeMatch (DetectEngineThreadCtx *det_ctx,
 static DetectSNMPPduTypeData *DetectSNMPPduTypeParse (const char *rawstr)
 {
     DetectSNMPPduTypeData *dd = NULL;
-#define MAX_SUBSTRINGS 30
     int ret = 0, res = 0;
     int ov[MAX_SUBSTRINGS];
     char value1[20] = "";
     char *endptr = NULL;
 
-    ret = pcre_exec(parse_regex, parse_regex_study, rawstr, strlen(rawstr), 0,
-                    0, ov, MAX_SUBSTRINGS);
+    ret = DetectParsePcreExec(&parse_regex, rawstr, 0, 0, ov, MAX_SUBSTRINGS);
     if (ret != 2) {
         SCLogError(SC_ERR_PCRE_MATCH, "Parse error %s", rawstr);
         goto error;
@@ -224,7 +212,7 @@ static int DetectSNMPPduTypeSetup (DetectEngineCtx *de_ctx, Signature *s,
     return 0;
 
 error:
-    DetectSNMPPduTypeFree(dd);
+    DetectSNMPPduTypeFree(de_ctx, dd);
     return -1;
 }
 
@@ -234,7 +222,7 @@ error:
  *
  * \param de_ptr Pointer to DetectSNMPPduTypeData.
  */
-static void DetectSNMPPduTypeFree(void *ptr)
+static void DetectSNMPPduTypeFree(DetectEngineCtx *de_ctx, void *ptr)
 {
     SCFree(ptr);
 }

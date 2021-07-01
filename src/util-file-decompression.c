@@ -97,12 +97,10 @@ int FileSwfDecompression(const uint8_t *buffer, uint32_t buffer_len,
     }
 
     uint32_t compressed_data_len = 0;
-    if (buffer_len > offset && compress_depth == 0) {
-        compressed_data_len = buffer_len - offset;
-    } else if (compress_depth > 0 && compress_depth <= buffer_len) {
+    if (compress_depth > 0 && compress_depth <= buffer_len) {
         compressed_data_len = compress_depth;
-    } else if (compress_depth > 0 && compress_depth > buffer_len) {
-        compressed_data_len = buffer_len;
+    } else {
+        compressed_data_len = buffer_len - offset;
     }
 
     /* get swf version */
@@ -165,9 +163,6 @@ int FileSwfDecompression(const uint8_t *buffer, uint32_t buffer_len,
     } else if ((swf_type == HTTP_SWF_COMPRESSION_LZMA || swf_type == HTTP_SWF_COMPRESSION_BOTH) &&
                compression_type == FILE_SWF_LZMA_COMPRESSION)
     {
-#ifndef HAVE_LIBLZMA
-        goto error;
-#else
         /* we need to setup the lzma header */
         /*
          * | 5 bytes         | 8 bytes             | n bytes         |
@@ -190,7 +185,6 @@ int FileSwfDecompression(const uint8_t *buffer, uint32_t buffer_len,
                                      out_buffer->buf + 8, out_buffer->len - 8);
         if (r == 0)
             goto error;
-#endif
     } else {
         goto error;
     }

@@ -53,7 +53,7 @@ void ReceivePfringThreadExitStats(ThreadVars *, void *);
 TmEcode ReceivePfringThreadDeinit(ThreadVars *, void *);
 
 TmEcode DecodePfringThreadInit(ThreadVars *, const void *, void **);
-TmEcode DecodePfring(ThreadVars *, Packet *, void *, PacketQueue *, PacketQueue *);
+TmEcode DecodePfring(ThreadVars *, Packet *, void *);
 TmEcode DecodePfringThreadDeinit(ThreadVars *tv, void *data);
 
 extern int max_pending_packets;
@@ -70,7 +70,6 @@ void TmModuleReceivePfringRegister (void)
     tmm_modules[TMM_RECEIVEPFRING].Func = NULL;
     tmm_modules[TMM_RECEIVEPFRING].ThreadExitPrintStats = NULL;
     tmm_modules[TMM_RECEIVEPFRING].ThreadDeinit = NULL;
-    tmm_modules[TMM_RECEIVEPFRING].RegisterTests = NULL;
     tmm_modules[TMM_RECEIVEPFRING].cap_flags = SC_CAP_NET_ADMIN | SC_CAP_NET_RAW |
         SC_CAP_NET_BIND_SERVICE | SC_CAP_NET_BROADCAST;
     tmm_modules[TMM_RECEIVEPFRING].flags = TM_FLAG_RECEIVE_TM;
@@ -83,7 +82,6 @@ void TmModuleDecodePfringRegister (void)
     tmm_modules[TMM_DECODEPFRING].Func = NULL;
     tmm_modules[TMM_DECODEPFRING].ThreadExitPrintStats = NULL;
     tmm_modules[TMM_DECODEPFRING].ThreadDeinit = NULL;
-    tmm_modules[TMM_DECODEPFRING].RegisterTests = NULL;
     tmm_modules[TMM_DECODEPFRING].cap_flags = 0;
     tmm_modules[TMM_DECODEPFRING].flags = TM_FLAG_DECODE_TM;
 }
@@ -169,7 +167,6 @@ void TmModuleReceivePfringRegister (void)
     tmm_modules[TMM_RECEIVEPFRING].PktAcqBreakLoop = PfringBreakLoop;
     tmm_modules[TMM_RECEIVEPFRING].ThreadExitPrintStats = ReceivePfringThreadExitStats;
     tmm_modules[TMM_RECEIVEPFRING].ThreadDeinit = ReceivePfringThreadDeinit;
-    tmm_modules[TMM_RECEIVEPFRING].RegisterTests = NULL;
     tmm_modules[TMM_RECEIVEPFRING].flags = TM_FLAG_RECEIVE_TM;
 }
 
@@ -184,7 +181,6 @@ void TmModuleDecodePfringRegister (void)
     tmm_modules[TMM_DECODEPFRING].Func = DecodePfring;
     tmm_modules[TMM_DECODEPFRING].ThreadExitPrintStats = NULL;
     tmm_modules[TMM_DECODEPFRING].ThreadDeinit = DecodePfringThreadDeinit;
-    tmm_modules[TMM_DECODEPFRING].RegisterTests = NULL;
     tmm_modules[TMM_DECODEPFRING].flags = TM_FLAG_DECODE_TM;
 }
 
@@ -280,12 +276,10 @@ static inline void PfringProcessPacket(void *user, struct pfring_pkthdr *h, Pack
             p->flags |= PKT_IGNORE_CHECKSUM;
             break;
         case CHECKSUM_VALIDATION_AUTO:
-            if (ptv->livedev->ignore_checksum) {
-                p->flags |= PKT_IGNORE_CHECKSUM;
-            } else if (ChecksumAutoModeCheck(ptv->pkts,
+            if (ChecksumAutoModeCheck(ptv->pkts,
                         SC_ATOMIC_GET(ptv->livedev->pkts),
                         SC_ATOMIC_GET(ptv->livedev->invalid_checksums))) {
-                ptv->livedev->ignore_checksum = 1;
+                ptv->checksum_mode = CHECKSUM_VALIDATION_DISABLE;
                 p->flags |= PKT_IGNORE_CHECKSUM;
             }
             break;
@@ -419,7 +413,6 @@ TmEcode ReceivePfringLoop(ThreadVars *tv, void *data, void *slot)
             PfringProcessPacket(ptv, &hdr, p);
 
             if (TmThreadsSlotProcessPkt(ptv->tv, ptv->slot, p) != TM_ECODE_OK) {
-                TmqhOutputPacketpool(ptv->tv, p);
                 SCReturnInt(TM_ECODE_FAILED);
             }
 
@@ -434,7 +427,7 @@ TmEcode ReceivePfringLoop(ThreadVars *tv, void *data, void *slot)
             }
 
             /* pfring didn't use the packet yet */
-            TmThreadsCaptureHandleTimeout(tv, ptv->slot, p);
+            TmThreadsCaptureHandleTimeout(tv, p);
 
         } else {
             SCLogError(SC_ERR_PF_RING_RECV,"pfring_recv error  %" PRId32 "", r);
@@ -706,13 +699,12 @@ TmEcode ReceivePfringThreadDeinit(ThreadVars *tv, void *data)
 /**
  * \brief This function passes off to link type decoders.
  *
- * DecodePfring reads packets from the PacketQueue. Inside of libpcap version of
+ * DecodePfring decodes raw packets from PF_RING. Inside of libpcap version of
  * PF_RING all packets are marked as a link type of ethernet so that is what we do here.
  *
  * \param tv pointer to ThreadVars
  * \param p pointer to the current packet
  * \param data pointer that gets cast into PfringThreadVars for ptv
- * \param pq pointer to the current PacketQueue
  *
  * \todo Verify that PF_RING only deals with ethernet traffic
  *
@@ -720,14 +712,11 @@ TmEcode ReceivePfringThreadDeinit(ThreadVars *tv, void *data)
  *
  * \retval TM_ECODE_OK is always returned
  */
-TmEcode DecodePfring(ThreadVars *tv, Packet *p, void *data, PacketQueue *pq, PacketQueue *postpq)
+TmEcode DecodePfring(ThreadVars *tv, Packet *p, void *data)
 {
     DecodeThreadVars *dtv = (DecodeThreadVars *)data;
 
-    /* XXX HACK: flow timeout can call us for injected pseudo packets
-     *           see bug: https://redmine.openinfosecfoundation.org/issues/1107 */
-    if (p->flags & PKT_PSEUDO_STREAM_END)
-        return TM_ECODE_OK;
+    BUG_ON(PKT_IS_PSEUDOPKT(p));
 
     /* update counters */
     DecodeUpdatePacketCounters(tv, dtv, p);
@@ -737,7 +726,7 @@ TmEcode DecodePfring(ThreadVars *tv, Packet *p, void *data, PacketQueue *pq, Pac
         StatsIncr(tv, dtv->counter_vlan);
     }
 
-    DecodeEthernet(tv, dtv, p, GET_PKT_DATA(p), GET_PKT_LEN(p), pq);
+    DecodeEthernet(tv, dtv, p, GET_PKT_DATA(p), GET_PKT_LEN(p));
 
     PacketDecodeFinalize(tv, dtv, p);
 

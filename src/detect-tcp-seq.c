@@ -43,22 +43,25 @@
 static int DetectSeqSetup(DetectEngineCtx *, Signature *, const char *);
 static int DetectSeqMatch(DetectEngineThreadCtx *,
                           Packet *, const Signature *, const SigMatchCtx *);
+#ifdef UNITTESTS
 static void DetectSeqRegisterTests(void);
-static void DetectSeqFree(void *);
+#endif
+static void DetectSeqFree(DetectEngineCtx *, void *);
 static int PrefilterSetupTcpSeq(DetectEngineCtx *de_ctx, SigGroupHead *sgh);
-static _Bool PrefilterTcpSeqIsPrefilterable(const Signature *s);
+static bool PrefilterTcpSeqIsPrefilterable(const Signature *s);
 
 void DetectSeqRegister(void)
 {
     sigmatch_table[DETECT_SEQ].name = "tcp.seq";
     sigmatch_table[DETECT_SEQ].alias = "seq";
     sigmatch_table[DETECT_SEQ].desc = "check for a specific TCP sequence number";
-    sigmatch_table[DETECT_SEQ].url = DOC_URL DOC_VERSION "/rules/header-keywords.html#seq";
+    sigmatch_table[DETECT_SEQ].url = "/rules/header-keywords.html#seq";
     sigmatch_table[DETECT_SEQ].Match = DetectSeqMatch;
     sigmatch_table[DETECT_SEQ].Setup = DetectSeqSetup;
     sigmatch_table[DETECT_SEQ].Free = DetectSeqFree;
+#ifdef UNITTESTS
     sigmatch_table[DETECT_SEQ].RegisterTests = DetectSeqRegisterTests;
-
+#endif
     sigmatch_table[DETECT_SEQ].SupportsPrefilter = PrefilterTcpSeqIsPrefilterable;
     sigmatch_table[DETECT_SEQ].SetupPrefilter = PrefilterSetupTcpSeq;
 }
@@ -114,7 +117,7 @@ static int DetectSeqSetup (DetectEngineCtx *de_ctx, Signature *s, const char *op
 
     sm->type = DETECT_SEQ;
 
-    if (-1 == ByteExtractStringUint32(&data->seq, 10, 0, optstr)) {
+    if (StringParseUint32(&data->seq, 10, 0, optstr) < 0) {
         goto error;
     }
     sm->ctx = (SigMatchCtx*)data;
@@ -128,7 +131,7 @@ error:
     if (data)
         SCFree(data);
     if (sm)
-        SigMatchFree(sm);
+        SigMatchFree(de_ctx, sm);
     return -1;
 
 }
@@ -139,7 +142,7 @@ error:
  *
  * \param data pointer to seq configuration data
  */
-static void DetectSeqFree(void *ptr)
+static void DetectSeqFree(DetectEngineCtx *de_ctx, void *ptr)
 {
     DetectSeqData *data = (DetectSeqData *)ptr;
     SCFree(data);
@@ -152,7 +155,7 @@ PrefilterPacketSeqMatch(DetectEngineThreadCtx *det_ctx, Packet *p, const void *p
 {
     const PrefilterPacketHeaderCtx *ctx = pectx;
 
-    if (PrefilterPacketHeaderExtraMatch(ctx, p) == FALSE)
+    if (!PrefilterPacketHeaderExtraMatch(ctx, p))
         return;
 
     if ((p->proto) == IPPROTO_TCP && !(PKT_IS_PSEUDOPKT(p)) &&
@@ -170,13 +173,13 @@ PrefilterPacketSeqSet(PrefilterPacketHeaderValue *v, void *smctx)
     v->u32[0] = a->seq;
 }
 
-static _Bool
+static bool
 PrefilterPacketSeqCompare(PrefilterPacketHeaderValue v, void *smctx)
 {
     const DetectSeqData *a = smctx;
     if (v.u32[0] == a->seq)
-        return TRUE;
-    return FALSE;
+        return true;
+    return false;
 }
 
 static int PrefilterSetupTcpSeq(DetectEngineCtx *de_ctx, SigGroupHead *sgh)
@@ -187,16 +190,16 @@ static int PrefilterSetupTcpSeq(DetectEngineCtx *de_ctx, SigGroupHead *sgh)
         PrefilterPacketSeqMatch);
 }
 
-static _Bool PrefilterTcpSeqIsPrefilterable(const Signature *s)
+static bool PrefilterTcpSeqIsPrefilterable(const Signature *s)
 {
     const SigMatch *sm;
     for (sm = s->init_data->smlists[DETECT_SM_LIST_MATCH] ; sm != NULL; sm = sm->next) {
         switch (sm->type) {
             case DETECT_SEQ:
-                return TRUE;
+                return true;
         }
     }
-    return FALSE;
+    return false;
 }
 
 
@@ -287,16 +290,13 @@ end:
     return result;
 }
 
-#endif /* UNITTESTS */
-
 /**
  * \internal
  * \brief This function registers unit tests for DetectSeq
  */
 static void DetectSeqRegisterTests(void)
 {
-#ifdef UNITTESTS
     UtRegisterTest("DetectSeqSigTest01", DetectSeqSigTest01);
     UtRegisterTest("DetectSeqSigTest02", DetectSeqSigTest02);
-#endif /* UNITTESTS */
 }
+#endif /* UNITTESTS */
